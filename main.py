@@ -289,14 +289,31 @@ class NiftyTradingAgent:
         # Initialize option metrics with safe defaults
         option_metrics = {}
         try:
-            # Attempt to fetch option chain data for PCR
+            # Attempt to fetch option chain data for PCR, IV, and OI Change
             oc_data = self.option_fetcher.fetch_option_chain(instrument)
             if oc_data:
                 pcr_value = self.option_analyzer.calculate_pcr(oc_data)
+                
+                # Fetch spot price for IV/OI calculation
+                spot_price = float(nse_data.get("price", 0) or 0)
+                iv_value = self.option_analyzer.calculate_atm_iv(oc_data, spot_price)
+                oi_change_data = self.option_analyzer.analyze_oi_change(oc_data, spot_price)
+                max_pain = self.option_analyzer.calculate_max_pain(oc_data)
+                
                 if pcr_value is not None:
                     option_metrics["pcr"] = pcr_value
+                if iv_value is not None:
+                    option_metrics["iv"] = iv_value
+                if oi_change_data:
+                    option_metrics["oi_change"] = oi_change_data
+                if max_pain is not None:
+                    option_metrics["max_pain"] = max_pain
+                    
+                logger.info(f"📊 Option Metrics: PCR={pcr_value}, IV={iv_value}%, MaxPain={max_pain}, OI_Sentiment={oi_change_data.get('sentiment')}")
+
         except Exception as e:
             # Continue without option metrics if fetch fails (backtest safe)
+            logger.warning(f"⚠️ Failed to calculate option metrics: {e}")
             pass
 
         current_price = float(nse_data.get("price", 0) or 0) if nse_data else 0
@@ -451,6 +468,14 @@ class NiftyTradingAgent:
                 logger.warning("   ⚠️  Breakout without volume confirmation")
 
             # ====================
+            # IV Filter (Low Volatility)
+            # ====================
+            iv = option_metrics.get("iv")
+            if iv is not None and iv < 10:
+                logger.warning(f"⏭️ IV {iv}% is too low (IV Crush) - suppressing signals")
+                return []
+
+            # ====================
             # EMERGENCY FIX: Detect Conflicting Signals
             # ====================
             # If both LONG and SHORT signals detected in same cycle, keep only highest confidence
@@ -465,19 +490,28 @@ class NiftyTradingAgent:
                         f"Long: {len(long_signals)} | Short: {len(short_signals)}"
                     )
                     
-                    # 1. Try to resolve using Option Chain PCR
+                    # 1. Try to resolve using Option Chain PCR & OI Change
                     pcr = option_metrics.get("pcr")
+                    oi_sentiment = option_metrics.get("oi_change", {}).get("sentiment", "NEUTRAL")
                     resolved = False
                     
+                    bias = "NEUTRAL"
                     if pcr:
-                        if pcr > 1.2:
-                            logger.info(f"✅ PCR {pcr} is BULLISH - Resolving conflict -> KEEP LONG")
-                            signals = long_signals
-                            resolved = True
-                        elif pcr < 0.8:
-                            logger.info(f"✅ PCR {pcr} is BEARISH - Resolving conflict -> KEEP SHORT")
-                            signals = short_signals
-                            resolved = True
+                        if pcr > 1.2: bias = "BULLISH"
+                        elif pcr < 0.8: bias = "BEARISH"
+                    
+                    # OI Sentiment overrules PCR if strong
+                    if "BULLISH" in oi_sentiment: bias = "BULLISH"
+                    elif "BEARISH" in oi_sentiment: bias = "BEARISH"
+                    
+                    if bias == "BULLISH":
+                        logger.info(f"✅ Option Data ({bias}) Resolves conflict -> KEEP LONG")
+                        signals = long_signals
+                        resolved = True
+                    elif bias == "BEARISH":
+                        logger.info(f"✅ Option Data ({bias}) Resolves conflict -> KEEP SHORT")
+                        signals = short_signals
+                        resolved = True
                     
                     if not resolved:
                         # 2. Fallback: Take only the highest confidence signal
@@ -493,24 +527,64 @@ class NiftyTradingAgent:
                         signals = [best_signal]
 
             # ====================
-            # Option Chain Confidence Boost
+            # Option Chain Confidence Boost (PCR + OI Sentiment)
             # ====================
             pcr = option_metrics.get("pcr")
-            if pcr and signals:
+            oi_sentiment = option_metrics.get("oi_change", {}).get("sentiment", "NEUTRAL")
+            
+            if signals and (pcr or oi_sentiment != "NEUTRAL"):
                 for sig in signals:
                     direction = "LONG" if any(x in sig["signal_type"] for x in ["BULLISH", "SUPPORT"]) else "SHORT"
                     
-                    # Boost if PCR aligns with direction
-                    if direction == "LONG" and pcr > 1.2:
-                        sig["confidence"] = min(95.0, sig["confidence"] + 5)
-                        sig["description"] += f" | PCR {pcr} confirms"
-                    elif direction == "SHORT" and pcr < 0.8:
-                        sig["confidence"] = min(95.0, sig["confidence"] + 5)
-                        sig["description"] += f" | PCR {pcr} confirms"
-                    elif (direction == "LONG" and pcr < 0.8) or (direction == "SHORT" and pcr > 1.2):
-                         # PCR contradicts - reduce confidence slightly
-                         sig["confidence"] = max(0, sig["confidence"] - 10)
-                         sig["description"] += f" | PCR {pcr} contradicts"
+                    boost_score = 0
+                    confirmations = []
+                    contradictions = []
+                    
+                    # PCR Logic
+                    if pcr:
+                        if direction == "LONG" and pcr > 1.2:
+                            boost_score += 5
+                            confirmations.append(f"PCR {pcr}")
+                        elif direction == "SHORT" and pcr < 0.8:
+                            boost_score += 5
+                            confirmations.append(f"PCR {pcr}")
+                        elif (direction == "LONG" and pcr < 0.8) or (direction == "SHORT" and pcr > 1.2):
+                            boost_score -= 10
+                            contradictions.append(f"PCR {pcr}")
+
+                    # OI Sentiment Logic
+                    if oi_sentiment != "NEUTRAL":
+                        if direction == "LONG" and "BULLISH" in oi_sentiment:
+                             boost_score += 5
+                             confirmations.append(f"OI {oi_sentiment}")
+                        elif direction == "SHORT" and "BEARISH" in oi_sentiment:
+                             boost_score += 5
+                             confirmations.append(f"OI {oi_sentiment}")
+                        elif (direction == "LONG" and "BEARISH" in oi_sentiment) or \
+                             (direction == "SHORT" and "BULLISH" in oi_sentiment):
+                             boost_score -= 10
+                             contradictions.append(f"OI {oi_sentiment}")
+
+                    # Apply Boost
+                    sig["confidence"] = max(0, min(100, sig["confidence"] + boost_score))
+                    
+                    if confirmations:
+                        sig["description"] += f" | ✅ Conf: {', '.join(confirmations)}"
+                    if contradictions:
+                        sig["description"] += f" | ⚠️ Warn: {', '.join(contradictions)}"
+
+                # Add Max Pain Context
+                max_pain = option_metrics.get("max_pain")
+                if max_pain:
+                    for sig in signals: 
+                         # Calculate deviation
+                         price = current_price
+                         diff = price - max_pain
+                         
+                         # If significant deviation (>1%), add context
+                         if abs(diff) > (price * 0.01):
+                             status = "ABOVE" if diff > 0 else "BELOW"
+                             sig["description"] += f" | MaxPain: {max_pain:.0f} ({status})"
 
             return signals
 

@@ -96,6 +96,106 @@ class OptionChainAnalyzer:
             logger.error(f"Error calculating Max Pain: {e}")
             return None
 
+    def calculate_atm_iv(self, option_data: Dict, spot_price: float) -> Optional[float]:
+        """
+        Calculate average Implied Volatility (IV) for ATM strikes.
+        Returns average of Call IV and Put IV for the strike closest to spot price.
+        """
+        try:
+            records = option_data.get('records', {})
+            data = records.get('data', [])
+            
+            if not data or spot_price == 0:
+                return None
+                
+            # Find ATM strike (closest to spot)
+            atm_strike_data = min(data, key=lambda x: abs(x['strikePrice'] - spot_price))
+            
+            iv_sum = 0
+            count = 0
+            
+            if 'CE' in atm_strike_data:
+                iv = atm_strike_data['CE'].get('impliedVolatility', 0)
+                if iv > 0:
+                    iv_sum += iv
+                    count += 1
+                    
+            if 'PE' in atm_strike_data:
+                iv = atm_strike_data['PE'].get('impliedVolatility', 0)
+                if iv > 0:
+                    iv_sum += iv
+                    count += 1
+            
+            if count == 0:
+                return None
+                
+            return round(iv_sum / count, 2)
+            
+        except Exception as e:
+            logger.error(f"Error calculating ATM IV: {e}")
+            return None
+
+    def analyze_oi_change(self, option_data: Dict, spot_price: float) -> Dict:
+        """
+        Analyze Change in Open Interest to determine sentiment.
+        Calculates net OI change for strikes within 5% of spot.
+        """
+        try:
+            records = option_data.get('records', {})
+            data = records.get('data', [])
+            
+            if not data or spot_price <= 0:
+                return {}
+            
+            # Filter for strikes within 5% range to focus on relevant activity
+            relevant_data = [
+                d for d in data 
+                if abs(d['strikePrice'] - spot_price) < (spot_price * 0.05)
+            ]
+            
+            total_call_change = 0
+            total_put_change = 0
+            
+            for item in relevant_data:
+                if 'CE' in item:
+                    total_call_change += item['CE'].get('changeinOpenInterest', 0)
+                if 'PE' in item:
+                    total_put_change += item['PE'].get('changeinOpenInterest', 0)
+            
+            # Determine sentiment based on net flow
+            # Call OI Increase > Put OI Increase -> Bearish (Resistance building)
+            # Put OI Increase > Call OI Increase -> Bullish (Support building)
+            
+            sentiment = "NEUTRAL"
+            difference = total_put_change - total_call_change
+            
+            # Significant difference threshold (e.g., 50k contracts)
+            # Adjust based on instrument volume, but relative comparison is safer
+            
+            if total_call_change > 0 and total_put_change > 0:
+                if total_put_change > (total_call_change * 1.5):
+                    sentiment = "BULLISH"
+                elif total_call_change > (total_put_change * 1.5):
+                    sentiment = "BEARISH"
+            
+            # Handling unwinding scenarios (negative OI change)
+            elif total_call_change < 0 and total_put_change < 0:
+                 if abs(total_call_change) > abs(total_put_change) * 1.5:
+                     sentiment = "BULLISH_UNWINDING" # Short covering
+                 elif abs(total_put_change) > abs(total_call_change) * 1.5:
+                     sentiment = "BEARISH_UNWINDING" # Long unwinding
+
+            return {
+                "total_call_change": total_call_change,
+                "total_put_change": total_put_change,
+                "sentiment": sentiment,
+                "net_change_diff": difference
+            }
+            
+        except Exception as e:
+            logger.error(f"Error analyzing OI change: {e}")
+            return {}
+
     def get_key_strikes(self, option_data: Dict) -> Dict:
         """
         Identify strikes with highest Open Interest for Support and Resistance.
