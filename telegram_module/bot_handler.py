@@ -124,8 +124,13 @@ class TelegramBot:
                 f"📈 RR: {rr:.2f}:1\n"
                 f"⚡ Confidence: {conf:.1f}%\n\n"
                 f"{signal.get('description', '')}\n\n"
-                f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
             )
+            
+            # Add IST timestamp
+            import pytz
+            ist = pytz.timezone("Asia/Kolkata")
+            now_ist = datetime.now(ist)
+            message += f"⏰ {now_ist.strftime('%Y-%m-%d %H:%M:%S IST')}"
 
             if signal.get("ai_analysis") and INCLUDE_AI_SUMMARY_IN_ALERT:
                 ai_data = signal["ai_analysis"]
@@ -171,16 +176,41 @@ class TelegramBot:
     def send_retest_alert(self, signal: Dict) -> bool:
         """Send retest setup alert."""
         try:
+            import pytz
+            
             instrument = signal.get("instrument", "N/A")
+            signal_type = signal.get("signal_type", "RETEST")
             level = float(signal.get("price_level", 0.0))
+            entry = float(signal.get("entry_price", 0.0))
+            sl = float(signal.get("stop_loss", 0.0))
+            tp = float(signal.get("take_profit", 0.0))
+            conf = float(signal.get("confidence", 0.0))
             desc = signal.get("description", "")
+            
+            # Determine direction
+            direction = "📈 LONG" if entry > sl else "📉 SHORT"
+            emoji = "🎯" if "SUPPORT" in signal_type.upper() else "🔄"
+            
+            # Calculate R:R
+            risk = abs(entry - sl)
+            reward = abs(tp - entry)
+            rr = reward / risk if risk > 0 else 0
+            
+            # Get IST time
+            ist = pytz.timezone("Asia/Kolkata")
+            now_ist = datetime.now(ist)
 
             message = (
-                f"{ALERT_TYPES.get('RETEST', 'RETEST')}\n\n"
-                f"📊 {instrument}\n"
-                f"📍 Level: {level:.2f}\n\n"
-                f"{desc}\n\n"
-                f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                f"{emoji} {ALERT_TYPES.get('RETEST', 'RETEST')} {direction}\n\n"
+                f"📊 <b>{instrument}</b>\n"
+                f"📍 Key Level: {level:.2f}\n\n"
+                f"<b>💰 Entry:</b> {entry:.2f}\n"
+                f"<b>🛑 Stop Loss:</b> {sl:.2f}\n"
+                f"<b>🎯 Target:</b> {tp:.2f}\n"
+                f"<b>📈 Risk:Reward:</b> 1:{rr:.1f}\n"
+                f"<b>⚡ Confidence:</b> {conf:.0f}%\n\n"
+                f"💡 {desc}\n\n"
+                f"⏰ {now_ist.strftime('%Y-%m-%d %H:%M:%S IST')}"
             )
 
             return self.send_message(message)
@@ -192,14 +222,34 @@ class TelegramBot:
     def send_inside_bar_alert(self, signal: Dict) -> bool:
         """Send inside bar setup alert."""
         try:
+            import pytz
+            
             instrument = signal.get("instrument", "N/A")
+            entry = float(signal.get("entry_price", 0.0))
+            sl = float(signal.get("stop_loss", 0.0))
+            tp = float(signal.get("take_profit", 0.0))
+            conf = float(signal.get("confidence", 0.0))
             desc = signal.get("description", "")
+            
+            # Calculate R:R
+            risk = abs(entry - sl)
+            reward = abs(tp - entry)
+            rr = reward / risk if risk > 0 else 0
+            
+            # Get IST time
+            ist = pytz.timezone("Asia/Kolkata")
+            now_ist = datetime.now(ist)
 
             message = (
-                f"{ALERT_TYPES.get('INSIDE_BAR', 'INSIDE BAR')}\n\n"
-                f"📊 {instrument}\n\n"
-                f"{desc}\n\n"
-                f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                f"📊 {ALERT_TYPES.get('INSIDE_BAR', 'INSIDE BAR SETUP')}\n\n"
+                f"📊 <b>{instrument}</b>\n\n"
+                f"<b>💰 Entry:</b> {entry:.2f}\n"
+                f"<b>🛑 Stop Loss:</b> {sl:.2f}\n"
+                f"<b>🎯 Target:</b> {tp:.2f}\n"
+                f"<b>📈 Risk:Reward:</b> 1:{rr:.1f}\n"
+                f"<b>⚡ Confidence:</b> {conf:.0f}%\n\n"
+                f"💡 {desc}\n\n"
+                f"⏰ {now_ist.strftime('%Y-%m-%d %H:%M:%S IST')}"
             )
 
             return self.send_message(message)
@@ -215,20 +265,87 @@ class TelegramBot:
     # =====================================================================
 
     def send_daily_summary(self, summary_data: Dict) -> bool:
-        """Send daily market summary."""
+        """Send comprehensive end-of-day market summary."""
         try:
-            instrument = summary_data.get("instrument", "N/A")
-            message = (
-                "📊 DAILY MARKET SUMMARY\n\n"
-                f"Instrument: {instrument}\n"
-                f"Date: {datetime.now().strftime('%Y-%m-%d')}\n\n"
-                f"Open: {summary_data.get('open')}\n"
-                f"High: {summary_data.get('high')}\n"
-                f"Low: {summary_data.get('low')}\n"
-                f"Close: {summary_data.get('close')}\n\n"
-                f"Signals Generated: {summary_data.get('signal_count', 0)}"
-            )
-
+            message = "<b>📊 END-OF-DAY MARKET SUMMARY</b>\n"
+            message += f"📅 {datetime.now().strftime('%B %d, %Y')}\n\n"
+            
+            # Price action for each instrument
+            instruments_data = summary_data.get("instruments", {})
+            for instrument, data in instruments_data.items():
+                change_pct = data.get("change_pct", 0)
+                emoji = "📈" if change_pct > 0 else "📉" if change_pct < 0 else "➖"
+                
+                message += f"<b>{emoji} {instrument}</b>\n"
+                message += f"Open: {data.get('open', 0):.2f} | High: {data.get('high', 0):.2f}\n"
+                message += f"Low: {data.get('low', 0):.2f} | <b>Close: {data.get('close', 0):.2f}</b>\n"
+                message += f"Change: <b>{change_pct:+.2f}%</b>\n"
+                
+                # Key levels
+                if data.get("pdh") and data.get("pdl"):
+                    message += f"PDH: {data['pdh']:.2f} | PDL: {data['pdl']:.2f}\n"
+                
+                # Trend
+                st_trend = data.get("short_term_trend", "NEUTRAL")
+                lt_trend = data.get("long_term_trend", "NEUTRAL")
+                message += f"Trend: {st_trend} (ST) / {lt_trend} (LT)\n\n"
+            
+            # Events summary
+            stats = summary_data.get("statistics", {})
+            message += "<b>🎯 Today's Events</b>\n"
+            message += f"🚀 Breakouts: {stats.get('breakouts', 0)}\n"
+            message += f"📉 Breakdowns: {stats.get('breakdowns', 0)}\n"
+            message += f"🔄 Retests: {stats.get('retests', 0)}\n"
+            message += f"↩️ Reversals: {stats.get('reversals', 0)}\n\n"
+            
+            # Performance stats
+            perf = summary_data.get("performance", {})
+            if perf and perf.get("total_alerts", 0) > 0:
+                message += "<b>📊 Performance (Last 24h)</b>\n"
+                message += f"Total Alerts: {perf.get('total_alerts', 0)}\n"
+                
+                # Only show win rate if we have closed trades
+                wins = perf.get("wins", 0)
+                losses = perf.get("losses", 0)
+                if wins + losses > 0:
+                    message += f"Win Rate: {perf.get('win_rate', 0):.1f}% ({wins}W-{losses}L)\n"
+                
+                by_type = perf.get("by_type", {})
+                if by_type:
+                    message += "<i>By Setup:</i>\n"
+                    for stype, data in by_type.items():
+                        readable_type = stype.replace("_", " ").title()
+                        count = data.get("count", 0)
+                        message += f"- {readable_type}: {count}\n"
+                message += "\n"
+            
+            # AI Forecast
+            forecast = summary_data.get("ai_forecast", {})
+            if forecast:
+                outlook = forecast.get("outlook", "NEUTRAL")
+                outlook_emoji = "🟢" if outlook == "BULLISH" else "🔴" if outlook == "BEARISH" else "🟡"
+                
+                message += f"<b>{outlook_emoji} AI Forecast - {outlook}</b>\n"
+                message += f"Confidence: {forecast.get('confidence', 50):.0f}%\n"
+                
+                # Parse summary if it's a JSON string (common with LLM output)
+                ai_summary = forecast.get("summary", "No forecast available")
+                if isinstance(ai_summary, str) and ai_summary.strip().startswith("{"):
+                    try:
+                        import json
+                        parsed = json.loads(ai_summary)
+                        ai_summary = parsed.get("summary", ai_summary)
+                    except:
+                        pass
+                        
+                message += f"{ai_summary}\n\n"
+            
+            # Statistics
+            message += "<b>📊 Session Stats</b>\n"
+            message += f"📡 Data Fetches: {stats.get('data_fetches', 0)}\n"
+            message += f"🔍 Analyses: {stats.get('analyses_run', 0)}\n"
+            message += f"🔔 Alerts Sent: {stats.get('alerts_sent', 0)}\n"
+            
             return self.send_message(message)
 
         except Exception as e:
@@ -257,8 +374,8 @@ class TelegramBot:
             )
             return False
 
-    def send_startup_message(self) -> bool:
-        """Send startup confirmation message."""
+    def send_startup_message(self, pdh_pdl_stats: Optional[Dict] = None) -> bool:
+        """Send startup confirmation message with optional PDH/PDL stats."""
         try:
             message = (
                 "🚀 NIFTY AI TRADING AGENT STARTED\n\n"
@@ -268,12 +385,76 @@ class TelegramBot:
                 "⏰ Active: 09:15 - 15:30 IST\n"
             )
 
+            if pdh_pdl_stats:
+                message += "\n📋 <b>Previous Day Stats</b>\n"
+                for instrument, stats in pdh_pdl_stats.items():
+                    message += (
+                        f"\n<b>{instrument}</b>\n"
+                        f"High: {stats['pdh']:.2f}\n"
+                        f"Low: {stats['pdl']:.2f}\n"
+                        f"Close: {stats['pdc']:.2f}\n"
+                    )
+
             return self.send_message(message)
 
         except Exception as e:
             logger.error(
                 f"❌ Failed to send startup message: {str(e)}"
             )
+            return False
+
+    def send_market_context(self, context_data: Dict, pdh_pdl_stats: Optional[Dict] = None, sr_levels: Optional[Dict] = None) -> bool:
+        """Send market context (Opening Range + S/R) update with optional PDH/PDL."""
+        try:
+            message = "🌅 <b>MARKET CONTEXT UPDATE</b>\n\n"
+            
+            all_instruments = set(context_data.keys())
+            if pdh_pdl_stats:
+                all_instruments.update(pdh_pdl_stats.keys())
+            if sr_levels:
+                all_instruments.update(sr_levels.keys())
+            
+            for instrument in sorted(list(all_instruments)):
+                message += f"<b>{instrument}</b>\n"
+                
+                # PDH/PDL
+                if pdh_pdl_stats and instrument in pdh_pdl_stats:
+                    stats = pdh_pdl_stats[instrument]
+                    message += (
+                        f"PDH: {stats['pdh']:.2f} | PDL: {stats['pdl']:.2f}\n"
+                    )
+
+                # Opening Range
+                if instrument in context_data:
+                    stats = context_data[instrument]
+                    if "orb_5m_high" in stats:
+                        message += (
+                            f"5m OR: {stats['orb_5m_low']:.2f} - {stats['orb_5m_high']:.2f}\n"
+                        )
+                    if "orb_15m_high" in stats:
+                        message += (
+                            f"15m OR: {stats['orb_15m_low']:.2f} - {stats['orb_15m_high']:.2f}\n"
+                        )
+                
+                # NEW: Support/Resistance Levels
+                if sr_levels and instrument in sr_levels:
+                    sr = sr_levels[instrument]
+                    # Show top 3 supports and resistances
+                    supports = sorted(sr.get('support', []))[-3:] if sr.get('support') else []
+                    resistances = sorted(sr.get('resistance', []))[:3] if sr.get('resistance') else []
+                    
+                    if supports:
+                        message += f"📊 Supports: {', '.join([f'{s:.2f}' for s in supports])}\n"
+                    if resistances:
+                        message += f"📊 Resistances: {', '.join([f'{r:.2f}' for r in resistances])}\n"
+                
+                message += "\n"
+
+            message += f"⏰ {datetime.now().strftime('%H:%M:%S')}"
+            return self.send_message(message)
+
+        except Exception as e:
+            logger.error(f"❌ Failed to send market context: {str(e)}")
             return False
 
     # =====================================================================

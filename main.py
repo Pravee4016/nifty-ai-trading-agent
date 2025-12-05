@@ -5,7 +5,7 @@ Coordinates: Data → Technical Analysis → AI → Telegram Alerts
 
 import logging
 import sys
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from typing import Dict, List
 
 import pytz
@@ -16,29 +16,29 @@ from config.settings import (
     MARKET_CLOSE_TIME,
     TIME_ZONE,
     DEBUG_MODE,
-    MIN_SIGNAL_CONFIDENCE,
+    DEBUG_MODE,
+    # MIN_SIGNAL_CONFIDENCE,
 )
+MIN_SIGNAL_CONFIDENCE = 50  # TEMPORARY BACKTEST PATCH
 
 from data_module.fetcher import get_data_fetcher, DataFetcher
 from analysis_module.technical import TechnicalAnalyzer
 from ai_module.groq_analyzer import get_analyzer
 from telegram_module.bot_handler import get_bot
-
-from datetime import datetime, time
-
+from data_module.persistence import get_persistence
+from data_module.trade_tracker import get_trade_tracker
+from data_module.option_chain_fetcher import OptionChainFetcher
+from analysis_module.option_chain_analyzer import OptionChainAnalyzer
 
 # ------------------------------------------------------
-# Market Hours Guard (RUNS BEFORE ANY OTHER LOGIC)
+# Market Hours Check (moved to cloud_function_handler)
 # ------------------------------------------------------
-def is_market_hours():
+def _is_market_hours_quick():
+    """Quick market hours check for early exit."""
     ist = pytz.timezone("Asia/Kolkata")
     now = datetime.now(ist).time()
-    return time(9, 20) <= now <= time(15, 30)
+    return time(9, 15) <= now <= time(15, 30)
 
-if not is_market_hours():
-    print("Outside market hours — exiting.")
-    exit()
-    
 logger = logging.getLogger(__name__)
 
 
@@ -68,8 +68,28 @@ class NiftyTradingAgent:
         self.fetcher: DataFetcher = get_data_fetcher()
         self.ai_analyzer = get_analyzer()
         self.telegram_bot = get_bot()
+        self.persistence = get_persistence()
+        self.trade_tracker = get_trade_tracker()
+        self.option_fetcher = OptionChainFetcher()
+        self.option_analyzer = OptionChainAnalyzer()
+        
         self.signals_generated: List[Dict] = []
         self.alerts_sent = 0
+        
+        # Daily event tracking for EOD summary
+        self.daily_breakouts: List[Dict] = []
+        self.daily_breakdowns: List[Dict] = []
+        self.daily_retests: List[Dict] = []
+        self.daily_reversals: List[Dict] = []
+        self.daily_data_fetches = 0
+        self.daily_analyses = 0
+        
+        # Duplicate alert prevention - Load from Firestore (persistent across executions)
+        self.recent_alerts: Dict[str, datetime] = self.persistence.get_recent_alerts()
+        logger.info(f"📂 Loaded {len(self.recent_alerts)} recent alerts from Firestore")
+        
+        # Level-based memory (tracks S/R levels to prevent repeats all day)
+        self.daily_level_memory: set = set()
 
         logger.info("=" * 70)
         logger.info("🚀 NIFTY AI TRADING AGENT INITIALIZED")
@@ -93,6 +113,9 @@ class NiftyTradingAgent:
 
         logger.info(f"\n📊 ANALYSIS STARTED | Instruments: {instruments}")
         logger.info("=" * 70)
+
+        # Track data fetch count
+        self.persistence.increment_stat("data_fetches", len(instruments))
 
         results = {
             "timestamp": datetime.now().isoformat(),
@@ -119,6 +142,8 @@ class NiftyTradingAgent:
                     results["alerts_sent"] += instrument_result["alerts_sent"]
                 else:
                     results["errors"] += 1
+                
+                self.persistence.increment_stat("analyses_run")
 
             except Exception as e:
                 logger.error(
@@ -145,10 +170,9 @@ class NiftyTradingAgent:
             logger.debug("Step 1: Fetching real-time NSE data...")
             nse_data = self.fetcher.fetch_nse_data(instrument)
 
-            if not nse:
-                logger.error("❌ Failed to fetch NSE data")
-                result["errors"].append("Data fetch failed")
-                return result
+            if not nse_data:
+                logger.warning("⚠️  NSE data fetch failed, will rely on yfinance data only")
+                nse_data = {}  # Empty dict as fallback
 
             logger.debug("Step 2: Fetching 5m and 15m historical data...")
             df_5m = self.fetcher.fetch_historical_data(
@@ -156,6 +180,10 @@ class NiftyTradingAgent:
             )
             df_15m = self.fetcher.fetch_historical_data(
                 instrument, period="10d", interval="15m"
+            )
+            # Fetch daily data for previous day trend
+            df_daily = self.fetcher.fetch_historical_data(
+                instrument, period="5d", interval="1d"
             )
 
             if df_5m is None or df_5m.empty:
@@ -170,16 +198,25 @@ class NiftyTradingAgent:
 
             df_5m = self.fetcher.preprocess_ohlcv(df_5m)
             df_15m = self.fetcher.preprocess_ohlcv(df_15m)
+            if df_daily is not None and not df_daily.empty:
+                df_daily = self.fetcher.preprocess_ohlcv(df_daily)
 
             logger.debug(
                 f"5m shape: {df_5m.shape} | 15m shape: {df_15m.shape}"
             )
 
             analyzer = TechnicalAnalyzer(instrument)
-            higher_tf_context = analyzer.get_higher_tf_context(df_15m)
+            higher_tf_context = analyzer.get_higher_tf_context(df_15m, df_5m, df_daily)
             analysis = analyzer.analyze_with_multi_tf(
                 df_5m, higher_tf_context
             )
+            
+            # Check and auto-close open trades based on current price
+            current_price = nse_data.get("lastPrice", 0)
+            if current_price > 0:
+                closed = self.trade_tracker.check_open_trades({instrument: current_price})
+                if closed > 0:
+                    logger.info(f"   ✅ Auto-closed {closed} trade(s) for {instrument}")
 
             signals = self._generate_signals(instrument, analysis, nse_data)
 
@@ -216,10 +253,15 @@ class NiftyTradingAgent:
             for signal in final_signals:
                 ai_analysis = self._get_ai_analysis(signal)
                 signal["ai_analysis"] = ai_analysis
+                
+                # Track events for daily summary
+                self._track_daily_event(signal)
 
                 if self._send_alert(signal):
                     result["alerts_sent"] += 1
                     self.alerts_sent += 1
+            
+            self.daily_analyses += 1
 
             logger.info(
                 f"✅ {instrument} analysis complete | "
@@ -235,15 +277,61 @@ class NiftyTradingAgent:
             return result
 
     def _generate_signals(
-        self, instrument: str, analysis: Dict, nse_: Dict
+        self, instrument: str, analysis: Dict, nse_data: Dict
     ) -> List[Dict]:
         """
         Generate trading signals from analysis with confidence gate.
         """
+        from config.settings import MAX_SAME_DIRECTION_ALERTS
+        
         signals: List[Dict] = []
-        current_price = float(nse_data.get("price", 0) or 0)
+        
+        # Initialize option metrics with safe defaults
+        option_metrics = {}
+        try:
+            # Attempt to fetch option chain data for PCR
+            oc_data = self.option_fetcher.fetch_option_chain(instrument)
+            if oc_data:
+                pcr_value = self.option_analyzer.calculate_pcr(oc_data)
+                if pcr_value is not None:
+                    option_metrics["pcr"] = pcr_value
+        except Exception as e:
+            # Continue without option metrics if fetch fails (backtest safe)
+            pass
+
+        current_price = float(nse_data.get("price", 0) or 0) if nse_data else 0
 
         try:
+            # ====================
+            # Choppy Session Filter
+            # ====================
+            analyzer = TechnicalAnalyzer(instrument)
+            is_choppy, choppy_reason = analyzer._is_choppy_session(
+                self.fetcher.get_historical_data(instrument, "5m", 100)
+            )
+            if is_choppy:
+                logger.warning(f"⏭️ Choppy session detected: {choppy_reason} - suppressing signals")
+                return signals
+            
+            # ====================
+            # Correlation Check (max same-direction alerts in 15 mins)
+            # ====================
+            ist = pytz.timezone("Asia/Kolkata")
+            now = datetime.now(ist)
+            recent_15min = now - timedelta(minutes=15)
+            
+            recent_same_direction = sum(
+                1 for key, ts in self.recent_alerts.items()
+                if ts > recent_15min and (
+                    ("BULLISH" in key or "SUPPORT" in key) == 
+                    (analysis.get("breakout_signal") and "BULLISH" in str(analysis.get("breakout_signal")))
+                )
+            )
+            
+            if recent_same_direction >= MAX_SAME_DIRECTION_ALERTS:
+                logger.warning(f"⏭️ Correlation limit: {recent_same_direction} similar directional alerts in 15m")
+                return signals
+
             breakout = analysis.get("breakout_signal")
             retest = analysis.get("retest_signal")
             inside_bar = analysis.get("inside_bar_signal")
@@ -293,6 +381,8 @@ class NiftyTradingAgent:
                         f"| Conf: {sig['confidence']:.1f}%"
                     )
                     signals.append(sig)
+                else:
+                    logger.info(f"DEBUG DROP: Conf {sig['confidence']} < Min {MIN_SIGNAL_CONFIDENCE}")
 
             if inside_bar:
                 sig = {
@@ -311,10 +401,116 @@ class NiftyTradingAgent:
                     )
                     signals.append(sig)
 
+            # Pin Bar Signals
+            pin_bar = analysis.get("pin_bar_signal")
+            if pin_bar:
+                sig = {
+                    "instrument": instrument,
+                    "signal_type": pin_bar.signal_type.value,
+                    "entry_price": pin_bar.entry_price,
+                    "stop_loss": pin_bar.stop_loss,
+                    "take_profit": pin_bar.take_profit,
+                    "confidence": pin_bar.confidence,
+                    "price_level": pin_bar.price_level,
+                    "description": pin_bar.description,
+                    "risk_reward_ratio": pin_bar.risk_reward_ratio,
+                    "timestamp": pin_bar.timestamp.isoformat(),
+                }
+                if sig["confidence"] >= MIN_SIGNAL_CONFIDENCE:
+                    logger.info(
+                        f"   🔨 {sig['signal_type']} | Level: {sig['price_level']:.2f} | "
+                        f"Conf: {sig['confidence']:.1f}% | RR: {sig['risk_reward_ratio']:.1f}"
+                    )
+                    signals.append(sig)
+
+            # Engulfing Signals
+            engulfing = analysis.get("engulfing_signal")
+            if engulfing:
+                sig = {
+                    "instrument": instrument,
+                    "signal_type": engulfing.signal_type.value,
+                    "entry_price": engulfing.entry_price,
+                    "stop_loss": engulfing.stop_loss,
+                    "take_profit": engulfing.take_profit,
+                    "confidence": engulfing.confidence,
+                    "price_level": engulfing.price_level,
+                    "description": engulfing.description,
+                    "risk_reward_ratio": engulfing.risk_reward_ratio,
+                    "timestamp": engulfing.timestamp.isoformat(),
+                }
+                if sig["confidence"] >= MIN_SIGNAL_CONFIDENCE:
+                    logger.info(
+                        f"   🟢 {sig['signal_type']} | Level: {sig['price_level']:.2f} | "
+                        f"Conf: {sig['confidence']:.1f}% | RR: {sig['risk_reward_ratio']:.1f}"
+                    )
+                    signals.append(sig)
+
             if analysis.get("breakout_signal") and not analysis.get(
                 "volume_confirmed"
             ):
                 logger.warning("   ⚠️  Breakout without volume confirmation")
+
+            # ====================
+            # EMERGENCY FIX: Detect Conflicting Signals
+            # ====================
+            # If both LONG and SHORT signals detected in same cycle, keep only highest confidence
+            if len(signals) > 1:
+                long_signals = [s for s in signals if any(x in s["signal_type"] for x in ["BULLISH", "SUPPORT"])]
+                short_signals = [s for s in signals if any(x in s["signal_type"] for x in ["BEARISH", "RESISTANCE"])]
+                
+                if long_signals and short_signals:
+                    # CONFLICT DETECTED - both LONG and SHORT at same time
+                    logger.warning(
+                        f"⚠️ CONFLICT: Both LONG and SHORT signals detected | "
+                        f"Long: {len(long_signals)} | Short: {len(short_signals)}"
+                    )
+                    
+                    # 1. Try to resolve using Option Chain PCR
+                    pcr = option_metrics.get("pcr")
+                    resolved = False
+                    
+                    if pcr:
+                        if pcr > 1.2:
+                            logger.info(f"✅ PCR {pcr} is BULLISH - Resolving conflict -> KEEP LONG")
+                            signals = long_signals
+                            resolved = True
+                        elif pcr < 0.8:
+                            logger.info(f"✅ PCR {pcr} is BEARISH - Resolving conflict -> KEEP SHORT")
+                            signals = short_signals
+                            resolved = True
+                    
+                    if not resolved:
+                        # 2. Fallback: Take only the highest confidence signal
+                        all_sigs = long_signals + short_signals
+                        best_signal = max(all_sigs, key=lambda x: x.get('confidence', 0))
+                    
+                        logger.warning(
+                            f"   ✅ Keeping highest confidence: {best_signal['signal_type']} "
+                            f"({best_signal['confidence']:.0f}%)"
+                        )
+                        
+                        # Filter out all except the best
+                        signals = [best_signal]
+
+            # ====================
+            # Option Chain Confidence Boost
+            # ====================
+            pcr = option_metrics.get("pcr")
+            if pcr and signals:
+                for sig in signals:
+                    direction = "LONG" if any(x in sig["signal_type"] for x in ["BULLISH", "SUPPORT"]) else "SHORT"
+                    
+                    # Boost if PCR aligns with direction
+                    if direction == "LONG" and pcr > 1.2:
+                        sig["confidence"] = min(95.0, sig["confidence"] + 5)
+                        sig["description"] += f" | PCR {pcr} confirms"
+                    elif direction == "SHORT" and pcr < 0.8:
+                        sig["confidence"] = min(95.0, sig["confidence"] + 5)
+                        sig["description"] += f" | PCR {pcr} confirms"
+                    elif (direction == "LONG" and pcr < 0.8) or (direction == "SHORT" and pcr > 1.2):
+                         # PCR contradicts - reduce confidence slightly
+                         sig["confidence"] = max(0, sig["confidence"] - 10)
+                         sig["description"] += f" | PCR {pcr} contradicts"
 
             return signals
 
@@ -349,17 +545,235 @@ class NiftyTradingAgent:
             logger.warning(f"⚠️  AI analysis failed: {str(e)}")
             return {"recommendation": "HOLD", "confidence": 50}
 
-    def _send_alert(self, signal: Dict) -> bool:
-        """Send Telegram alert for a signal."""
+    def _check_alert_limits(self, signal: Dict) -> Tuple[bool, str]:
+        """
+        Check if sending this alert would exceed daily limits.
+        
+        Returns:
+            (can_send, rejection_reason)
+        """
+        try:
+            from config.settings import (
+                MAX_ALERTS_PER_DAY,
+                MAX_ALERTS_PER_TYPE,
+                MAX_ALERTS_PER_INSTRUMENT
+            )
+            
+            # Get today's stats from persistence
+            try:
+                today_stats = self.persistence.get_daily_stats()
+                total_alerts = today_stats.get("alerts_sent", 0)
+            except:
+                # If persistence fails, allow alert (fail open)
+                return True, ""
+            
+            instrument = signal.get("instrument", "")
+            signal_type = signal.get("signal_type", "")
+            
+            # 1. Check total daily limit
+            if total_alerts >= MAX_ALERTS_PER_DAY:
+                return False, f"Daily limit reached ({total_alerts}/{MAX_ALERTS_PER_DAY})"
+            
+            # 2. Check per-type limit (count alerts of this type today)
+            # We approximate by checking recent_alerts for similar types
+            recent_of_type = sum(
+                1 for key in self.recent_alerts.keys()
+                if signal_type in key
+            )
+            
+            if recent_of_type >= MAX_ALERTS_PER_TYPE:
+                return False, f"{signal_type} limit reached ({recent_of_type}/{MAX_ALERTS_PER_TYPE})"
+            
+            # 3. Check per-instrument limit
+            recent_for_instrument = sum(
+                1 for key in self.recent_alerts.keys()
+                if key.startswith(instrument)
+            )
+            
+            if recent_for_instrument >= MAX_ALERTS_PER_INSTRUMENT:
+                return False, f"{instrument} limit reached ({recent_for_instrument}/{MAX_ALERTS_PER_INSTRUMENT})"
+            
+            return True, ""
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Alert limit check failed: {str(e)}")
+            return True, ""  # Fail open
+
+    def _should_suppress_retest(self, signal: Dict) -> Tuple[bool, str]:
+        """
+        Specialized filter for RETEST alerts to reduce noise.
+        
+        Rules:
+        1. Proximity: Block if within 0.2% of recent alert at same level (60m window).
+        2. Conflict: Block if opposing retest at same level within 30m.
+        """
         try:
             stype = signal.get("signal_type", "")
+            if "RETEST" not in stype and "BOUNCE" not in stype:
+                return False, ""  # Not a retest, don't suppress
+            
+            instrument = signal.get("instrument", "")
+            price = float(signal.get("price_level", 0))
+            current_direction = "LONG" if "BULLISH" in stype or "SUPPORT" in stype else "SHORT"
+            
+            ist = pytz.timezone("Asia/Kolkata")
+            now = datetime.now(ist)
+            
+            for key, timestamp in self.recent_alerts.items():
+                # Key format: {instrument}_{stype}_{entry_price:.2f}
+                parts = key.split("_")
+                if len(parts) < 3: continue
+                
+                prev_inst = parts[0]
+                # Reconstruct type from middle parts
+                prev_type = "_".join(parts[1:-1])
+                try:
+                    prev_price = float(parts[-1])
+                except ValueError:
+                    continue
+                
+                if prev_inst != instrument:
+                    continue
+                
+                # Check 1: Proximity (Same Level)
+                # If within 0.2% price difference
+                if abs(prev_price - price) < (price * 0.002):
+                    prev_direction = "LONG" if "BULLISH" in prev_type or "SUPPORT" in prev_type else "SHORT"
+                    time_diff = (now - timestamp).total_seconds() / 60.0
+                    
+                    # A. Same Direction (Duplicate) -> 60 min cooldown for Retests
+                    if current_direction == prev_direction:
+                        if time_diff < 60:
+                            return True, f"Recent similar retest {time_diff:.1f}m ago"
+                    
+                    # B. Opposing Direction (Conflict) -> 30 min suppression
+                    else:
+                        if time_diff < 30:
+                            return True, f"Conflicting retest ({prev_direction}) {time_diff:.1f}m ago"
+                            
+            return False, ""
+            
+        except Exception as e:
+            logger.error(f"❌ Retest suppression check failed: {e}")
+            return False, ""
 
+    def _send_alert(self, signal: Dict) -> bool:
+        """Send Telegram alert for a signal with duplicate prevention and limits."""
+        try:
+            import pytz
+            
+            stype = signal.get("signal_type", "")
+            instrument = signal.get("instrument", "")
+            price_level = signal.get("price_level", 0)
+            
+            # ====================
+            # Alert Limit Check
+            # ====================
+            can_send, reject_reason = self._check_alert_limits(signal)
+            if not can_send:
+                logger.warning(f"⏭️ Alert limit: {reject_reason}")
+                return False
+            
+            # ====================
+            # Specialized Retest Filter
+            # ====================
+            if "RETEST" in stype or "BOUNCE" in stype:
+                should_suppress, reason = self._should_suppress_retest(signal)
+                if should_suppress:
+                    logger.info(f"⏭️ Suppressing RETEST alert: {reason}")
+                    return False
+            
+            # ====================
+            # Duplicate & Conflict Prevention (General)
+            # ====================
+            ist = pytz.timezone("Asia/Kolkata")
+            now = datetime.now(ist)
+            
+            # 1. Fuzzy Duplicate Check (30 min cooldown)
+            # Check for same instrument + same type + nearby level
+            # This suppresses TRUE duplicates but allows valid re-entries after 30 min
+            is_duplicate = False
+            for key, timestamp in self.recent_alerts.items():
+                parts = key.split("_")
+                if len(parts) < 3: continue
+                
+                prev_inst = parts[0]
+                prev_type = "_".join(parts[1:-1])
+                try:
+                    prev_level = float(parts[-1])
+                except: continue
+                
+                # Check if same instrument and signal type
+                if prev_inst == instrument and prev_type == stype:
+                    # Check price proximity (within 0.1%)
+                    if abs(prev_level - price_level) < (price_level * 0.001):
+                        time_diff = (now - timestamp).total_seconds() / 60.0
+                        if time_diff < 30:
+                            logger.info(
+                                f"⏭️ Skipping duplicate alert (fuzzy) | {instrument} {stype} @ {price_level:.2f} | "
+                                f"Close to {prev_level:.2f} ({time_diff:.1f}m ago)"
+                            )
+                            return False
+
+            # 2. Level-Based Memory (all-day blocking at same S/R level)
+            level_key = f"{instrument}_{stype}_level_{round(price_level / 25) * 25:.0f}"
+            if hasattr(self, 'daily_level_memory'):
+                if level_key in self.daily_level_memory:
+                    # Allow retests to bypass this strictly "once-per-day" rule via the specialized filter above
+                    # But for now, we'll keep it relaxed for breakouts
+                    if "RETEST" not in stype and "BOUNCE" not in stype:
+                        logger.info(
+                            f"⏭️ Skipping repeat at same level | {instrument} {stype} @ {price_level:.2f} | "
+                            f"Already alerted at this 25-point zone today"
+                        )
+                        return False
+            else:
+                self.daily_level_memory = set()
+
+            # 3. Directional Conflict Check
+            # Prevent LONG signal if SHORT sent recently at same level (and vice versa)
+            current_direction = "LONG" if "BULLISH" in stype or "SUPPORT" in stype else "SHORT"
+            
+            for key, timestamp in self.recent_alerts.items():
+                parts = key.split("_")
+                if len(parts) < 3: continue
+                
+                prev_inst = parts[0]
+                prev_type = "_".join(parts[1:-1])
+                try:
+                    prev_level = float(parts[-1])
+                except: continue
+                
+                # Check if same instrument and nearby level (within 0.2%)
+                if prev_inst == instrument and abs(prev_level - price_level) < (price_level * 0.002):
+                    prev_direction = "LONG" if "BULLISH" in prev_type or "SUPPORT" in prev_type else "SHORT"
+                    
+                    # If directions oppose and within 15 mins
+                    if current_direction != prev_direction:
+                        conflict_diff = (now - timestamp).total_seconds() / 60.0
+                        if conflict_diff < 15:
+                            logger.info(
+                                f"⏭️ Skipping conflicting signal | {current_direction} vs recent {prev_direction} | "
+                                f"Diff: {conflict_diff:.1f} mins"
+                            )
+                            return False
+            
+            # Create key for storage using actual entry price
+            entry_price = signal.get("entry_price", price_level)
+            alert_key = f"{instrument}_{stype}_{entry_price:.2f}"
+            
+            # ====================
+            # Send Alert
+            # ====================
             if "BREAKOUT" in stype or "BREAKDOWN" in stype:
                 success = self.telegram_bot.send_breakout_alert(signal)
             elif "RETEST" in stype or "SUPPORT_BOUNCE" in stype or "RESISTANCE_BOUNCE" in stype:
                 success = self.telegram_bot.send_retest_alert(signal)
             elif "INSIDE_BAR" in stype:
                 success = self.telegram_bot.send_inside_bar_alert(signal)
+            elif "PIN_BAR" in stype or "ENGULFING" in stype:
+                # Use retest alert format for pin bars and engulfing (similar structure)
+                success = self.telegram_bot.send_retest_alert(signal)
             else:
                 msg = (
                     f"{stype}\nEntry: {signal.get('entry_price')}\n"
@@ -369,6 +783,29 @@ class NiftyTradingAgent:
 
             if success:
                 logger.info("   ✅ Telegram alert sent")
+                self.persistence.increment_stat("alerts_sent")
+                
+                # Record trade for performance tracking
+                trade_id = self.trade_tracker.record_alert(signal)
+                if trade_id:
+                    logger.info(f"   📝 Trade tracked: {trade_id}")
+                
+                # Record this alert to prevent duplicates
+                self.recent_alerts[alert_key] = now
+                
+                # Record level for all-day blocking
+                level_key = f"{instrument}_{stype}_level_{round(price_level / 25) * 25:.0f}"
+                self.daily_level_memory.add(level_key)
+                
+                # Cleanup old entries (older than 6 hours)
+                cutoff_time = now - timedelta(hours=6)
+                self.recent_alerts = {
+                    k: v for k, v in self.recent_alerts.items() 
+                    if v > cutoff_time
+                }
+                
+                # Save to Firestore for persistence across executions
+                self.persistence.save_recent_alerts(self.recent_alerts)
             else:
                 logger.warning("   ⚠️  Telegram alert failed")
             return success
@@ -376,6 +813,149 @@ class NiftyTradingAgent:
         except Exception as e:
             logger.error(f"❌ Alert sending failed: {str(e)}")
             return False
+
+    # =====================================================================
+    # DAILY EVENT TRACKING & SUMMARY
+    # =====================================================================
+
+    def _track_daily_event(self, signal: Dict):
+        """Track signal event for daily summary."""
+        signal_type = signal.get("signal_type", "")
+        
+        # Local tracking - categorize all signal types
+        if signal_type == "BULLISH_BREAKOUT":
+            self.daily_breakouts.append(signal)
+            self.persistence.add_event("breakouts", signal)
+        elif signal_type == "BEARISH_BREAKOUT" or "BREAKDOWN" in signal_type:
+            self.daily_breakdowns.append(signal)
+            self.persistence.add_event("breakdowns", signal)
+        elif any(x in signal_type for x in ["RETEST", "BOUNCE", "PIN_BAR", "ENGULFING", "INSIDE_BAR"]):
+            self.daily_retests.append(signal)
+            self.persistence.add_event("retests", signal)
+        # Could add reversal detection logic here if needed
+
+    def generate_daily_summary(self) -> Dict:
+        """Generate comprehensive end-of-day market summary."""
+        try:
+            logger.info("📊 Generating end-of-day market summary")
+            
+            # Fetch persisted stats
+            stored_stats = self.persistence.get_daily_stats()
+            events = stored_stats.get("events", {})
+            
+            instruments = [
+                k for k, v in INSTRUMENTS.items() if v.get("active", False)
+            ]
+            
+            summary = {
+                "timestamp": datetime.now().isoformat(),
+                "instruments": {},
+                "statistics": {
+                    "data_fetches": stored_stats.get("data_fetches", 0),
+                    "analyses_run": stored_stats.get("analyses_run", 0),
+                    "alerts_sent": stored_stats.get("alerts_sent", 0),
+                    "breakouts": len(events.get("breakouts", [])),
+                    "breakdowns": len(events.get("breakdowns", [])),
+                    "retests": len(events.get("retests", [])),
+                    "reversals": len(events.get("reversals", [])),
+                },
+                "events": events
+            }
+            
+            # Get latest data for each instrument
+            for instrument in instruments:
+                try:
+                    # Fetch latest daily candle
+                    df_day = self.fetcher.fetch_historical_data(
+                        instrument, period="2d", interval="1d"
+                    )
+                    
+                    if df_day is not None and not df_day.empty:
+                        df_day = self.fetcher.preprocess_ohlcv(df_day)
+                        latest = df_day.iloc[-1]
+                        
+                        # Get PDH/PDL for context
+                        pdh_pdl = self.fetcher.get_previous_day_stats(instrument)
+                        
+                        # Get intraday data for trend analysis
+                        df_5m = self.fetcher.fetch_historical_data(
+                            instrument, period="1d", interval="5m"
+                        )
+                        
+                        # Calculate short-term trend (last hour of trading)
+                        short_term_trend = "NEUTRAL"
+                        long_term_trend = "NEUTRAL"
+                        
+                        if df_5m is not None and not df_5m.empty and len(df_5m) >= 12:
+                            df_5m = self.fetcher.preprocess_ohlcv(df_5m)
+                            last_12 = df_5m.tail(12)  # Last hour
+                            
+                            if last_12.iloc[-1]["close"] > last_12.iloc[0]["close"] * 1.001:
+                                short_term_trend = "BULLISH"
+                            elif last_12.iloc[-1]["close"] < last_12.iloc[0]["close"] * 0.999:
+                                short_term_trend = "BEARISH"
+                        
+                        # Long-term trend from daily close vs open
+                        if latest["close"] > latest["open"] * 1.005:
+                            long_term_trend = "BULLISH"
+                        elif latest["close"] < latest["open"] * 0.995:
+                            long_term_trend = "BEARISH"
+                        
+                        change_pct = ((latest["close"] - latest["open"]) / latest["open"]) * 100
+                        
+                        summary["instruments"][instrument] = {
+                            "open": latest["open"],
+                            "high": latest["high"],
+                            "low": latest["low"],
+                            "close": latest["close"],
+                            "change_pct": change_pct,
+                            "pdh": pdh_pdl.get("pdh") if pdh_pdl else None,
+                            "pdl": pdh_pdl.get("pdl") if pdh_pdl else None,
+                            "short_term_trend": short_term_trend,
+                            "long_term_trend": long_term_trend,
+                        }
+                        
+                except Exception as e:
+                    logger.error(f"Error getting summary for {instrument}: {str(e)}")
+            
+            # Get AI forecast
+            summary["ai_forecast"] = self._get_ai_market_forecast(summary)
+            
+            # Get performance stats
+            summary["performance"] = self.trade_tracker.get_stats(days=1)
+            
+            return summary
+            
+        except Exception as e:
+            logger.error(f"Failed to generate daily summary: {str(e)}")
+            return {}
+
+    def _get_ai_market_forecast(self, summary: Dict) -> Dict:
+        """Get AI-powered market forecast for next trading day."""
+        try:
+            # Build context for AI
+            context_parts = []
+            
+            for inst, data in summary.get("instruments", {}).items():
+                context_parts.append(
+                    f"{inst}: Close {data['close']:.2f} ({data['change_pct']:+.2f}%), "
+                    f"Trend: {data['short_term_trend']}/{data['long_term_trend']}"
+                )
+            
+            stats = summary.get("statistics", {})
+            context_parts.append(
+                f"Today's activity: {stats.get('breakouts', 0)} breakouts, "
+                f"{stats.get('breakdowns', 0)} breakdowns, {stats.get('retests', 0)} retests"
+            )
+            
+            context = ". ".join(context_parts)
+            
+            forecast = self.ai_analyzer.forecast_market_outlook(context)
+            return forecast
+            
+        except Exception as e:
+            logger.warning(f"AI forecast failed: {str(e)}")
+            return {"outlook": "NEUTRAL", "confidence": 50, "summary": "Forecast unavailable"}
 
     # =====================================================================
     # UTILITY
@@ -418,6 +998,73 @@ class NiftyTradingAgent:
         logger.debug(f"⏰ Outside market hours ({now.time()})")
         return False
 
+
+    def check_scheduled_messages(self):
+        """
+        Check and send scheduled messages based on time windows.
+        Ensures messages are sent only once per day.
+        """
+        tz = pytz.timezone(TIME_ZONE)
+        now = datetime.now(tz).time()
+        
+        # 1. Startup Message + PDH/PDL (09:15 - 09:20)
+        if time(9, 15) <= now <= time(9, 20):
+            logger.info("⏰ Time window for Startup Message")
+            
+            pdh_pdl_stats = {}
+            for instrument in INSTRUMENTS:
+                if INSTRUMENTS[instrument]["active"]:
+                    stats = self.fetcher.get_previous_day_stats(instrument)
+                    if stats:
+                        pdh_pdl_stats[instrument] = stats
+            
+            self.telegram_bot.send_startup_message(pdh_pdl_stats)
+
+        # 2. Market Context / Opening Range (09:30 - 09:35)
+        elif time(9, 30) <= now <= time(9, 35):
+            logger.info("⏰ Time window for Market Context Update")
+            
+            context_data = {}
+            pdh_pdl_stats = {}
+            sr_levels = {}  # NEW: Support/Resistance levels
+
+            for instrument in INSTRUMENTS:
+                if INSTRUMENTS[instrument]["active"]:
+                    # Opening range stats
+                    stats = self.fetcher.get_opening_range_stats(instrument)
+                    if stats:
+                        context_data[instrument] = stats
+                    
+                    # PDH/PDL
+                    p_stats = self.fetcher.get_previous_day_stats(instrument)
+                    if p_stats:
+                        pdh_pdl_stats[instrument] = p_stats
+                    
+                    # NEW: Calculate S/R levels
+                    try:
+                        df_5m = self.fetcher.fetch_historical_data(instrument, period="5d", interval="5m")
+                        if df_5m is not None and not df_5m.empty:
+                            df_5m = self.fetcher.preprocess_ohlcv(df_5m)
+                            analyzer = TechnicalAnalyzer(instrument)
+                            sr = analyzer.calculate_support_resistance(df_5m)
+                            sr_levels[instrument] = sr
+                            logger.info(f"✅ S/R calculated for {instrument} | Supports: {len(sr['support'])} | Resistances: {len(sr['resistance'])}")
+                    except Exception as e:
+                        logger.error(f"❌ S/R calculation failed for {instrument}: {e}")
+            
+            if context_data or pdh_pdl_stats or sr_levels:
+                self.telegram_bot.send_market_context(context_data, pdh_pdl_stats, sr_levels)
+            else:
+                logger.warning("⚠️ No market context data available to send")
+        
+        # 3. End-of-Day Summary (15:31 - 15:45) - MODIFIED: Strictly after market close
+        elif time(15, 31) <= now <= time(15, 45):
+            logger.info("⏰ Time window for End-of-Day Summary")
+            
+            summary = self.generate_daily_summary()
+            if summary:
+                self.telegram_bot.send_daily_summary(summary)
+
     def get_statistics(self) -> Dict:
         """Return simple statistics."""
         return {
@@ -426,6 +1073,34 @@ class NiftyTradingAgent:
             "ai_usage": self.ai_analyzer.get_usage_stats(),
             "bot_stats": self.telegram_bot.get_stats(),
         }
+
+
+def check_and_send_market_closed_alert():
+    """
+    Check if 'Market Closed' alert has been sent today. 
+    If not, and it is after 15:30 IST, send it once.
+    """
+    try:
+        from config.settings import TIME_ZONE
+        tz = pytz.timezone(TIME_ZONE)
+        now = datetime.now(tz)
+        
+        # Only check if it's after market close (15:30)
+        # We use 15:30 inclusive in case the job runs exactly then
+        if now.time() >= time(15, 30):
+            persistence = get_persistence()
+            stats = persistence.get_daily_stats()
+            
+            if not stats.get("market_closed_msg_sent"):
+                logger.info("🌙 Market Closed - Sending one-time alert")
+                bot = get_bot()
+                bot.send_message("🌙 <b>Market Closed</b> - Analysis Paused")
+                persistence.increment_stat("market_closed_msg_sent")
+            else:
+                logger.debug("🌙 Market Closed - Alert already sent today")
+                
+    except Exception as e:
+        logger.error(f"❌ Failed to check/send market closed alert: {e}")
 
 
 def main():
@@ -449,13 +1124,14 @@ def main():
     logger.info("✅ All connections successful\n")
 
     if agent.is_market_hours():
+        # Check for scheduled messages (Startup, Market Context)
+        agent.check_scheduled_messages()
+        
+        # Run Analysis
         results = agent.run_analysis()
-        agent.telegram_bot.send_startup_message()
     else:
         logger.info("⏰ Outside market hours - skipping analysis")
-        agent.telegram_bot.send_message(
-            "⏰ Outside market hours - analysis paused"
-        )
+        check_and_send_market_closed_alert()
 
     stats = agent.get_statistics()
     logger.info("\n📈 STATISTICS")
@@ -468,6 +1144,12 @@ def main():
 
 def cloud_function_handler(request):
     """Entry point for Google Cloud Functions."""
+    # Early exit for outside market hours (avoid full initialization)
+    if not _is_market_hours_quick():
+        # Check if we need to send the "Market Closed" alert before exiting
+        check_and_send_market_closed_alert()
+        return {"status": "skipped", "message": "Outside market hours"}
+    
     logger.info("☁️  Cloud Function triggered")
     main()
     return {"status": "success", "message": "Analysis completed"}

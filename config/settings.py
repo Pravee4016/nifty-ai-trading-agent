@@ -44,7 +44,7 @@ INSTRUMENTS = {
         "display_name": "Bank Nifty",
         "tick_size": 0.05,
         "lot_size": 15,
-        "active": True,
+        "active": False,
     },
     "FINNIFTY": {
         "symbol": "FINNIFTY",
@@ -199,7 +199,24 @@ ENABLE_CLOUD_LOGGING = DEPLOYMENT_MODE != "LOCAL"
 # DEBUG & DEVELOPMENT
 # ============================================================================
 
-DEBUG_MODE = os.getenv("DEBUG_MODE", "False").lower() == "true"
+DEBUG_MODE = os.getenv("DEBUG_MODE", "False") == "True"
+
+# ============================================================================
+# RISK MANAGEMENT
+# ============================================================================
+
+# Daily Alert Limits
+MAX_ALERTS_PER_DAY = int(os.getenv("MAX_ALERTS_PER_DAY", "999"))  # Effectively unlimited (rely on other filters)
+MAX_ALERTS_PER_TYPE = int(os.getenv("MAX_ALERTS_PER_TYPE", "10"))  # Max per signal type
+MAX_ALERTS_PER_INSTRUMENT = int(os.getenv("MAX_ALERTS_PER_INSTRUMENT", "15"))  # Max per instrument
+
+# Choppy Market Detection
+MIN_ATR_PERCENT = float(os.getenv("MIN_ATR_PERCENT", "0.3"))  # Min volatility for trading (ATR/price %)
+MAX_VWAP_CROSSES = int(os.getenv("MAX_VWAP_CROSSES", "4"))  # Max crosses in 10 bars = choppy
+
+# Correlation Limits
+MAX_SAME_DIRECTION_ALERTS = int(os.getenv("MAX_SAME_DIRECTION_ALERTS", "3"))  # Max similar directional trades in 15 mins
+
 SEND_TEST_ALERTS = os.getenv("SEND_TEST_ALERTS", "False").lower() == "true"
 DRY_RUN = os.getenv("DRY_RUN", "False").lower() == "true"
 VERBOSE = os.getenv("VERBOSE", "False").lower() == "true"

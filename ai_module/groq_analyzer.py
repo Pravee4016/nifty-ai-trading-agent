@@ -113,6 +113,66 @@ class GroqAnalyzer:
             logger.error(f"❌ Summary generation failed: {str(e)}")
             return "Market analysis temporarily unavailable."
 
+    def forecast_market_outlook(self, market_context: str) -> Dict:
+        """
+        Generate AI forecast for next trading day based on today's market action.
+        """
+        try:
+            prompt = (
+                "Based on today's market action, provide a forecast for the next trading day.\\n\\n"
+                f"Today's Summary: {market_context}\\n\\n"
+                "Respond in JSON format:\\n"
+                "{\\n"
+                '  \\"outlook\\": \\"BULLISH/BEARISH/NEUTRAL\\",\\n'
+                '  \\"confidence\\": 0-100,\\n'
+                ' \\"summary\\": \\"2-3 sentence forecast\\",\\n'
+                '  \\"key_levels\\": [\\"level1\\", \\"level2\\"]\\n'
+                "}"
+            )
+            
+            logger.debug("🔮 Generating market forecast via Groq")
+            response_text = self._call_groq_api(prompt)
+            
+            if not response_text:
+                return {
+                    "outlook": "NEUTRAL",
+                    "confidence": 50,
+                    "summary": "Forecast unavailable",
+                    "key_levels": []
+                }
+            
+            # Try to parse JSON
+            response_text = response_text.strip()
+            if response_text.startswith("{"):
+                forecast = json.loads(response_text)
+            else:
+                # Fallback parsing
+                lower = response_text.lower()
+                outlook = "NEUTRAL"
+                if "bullish" in lower:
+                    outlook = "BULLISH"
+                elif "bearish" in lower:
+                    outlook = "BEARISH"
+                
+                forecast = {
+                    "outlook": outlook,
+                    "confidence": 65,
+                    "summary": response_text[:400],
+                    "key_levels": []
+                }
+            
+            logger.info(f"✅ Forecast generated | Outlook: {forecast.get('outlook', 'NEUTRAL')}")
+            return forecast
+            
+        except Exception as e:
+            logger.error(f"❌ Forecast generation failed: {str(e)}")
+            return {
+                "outlook": "NEUTRAL",
+                "confidence": 50,
+                "summary": "Forecast temporarily unavailable.",
+                "key_levels": []
+            }
+
     # =====================================================================
     # GROQ API CALL
     # =====================================================================

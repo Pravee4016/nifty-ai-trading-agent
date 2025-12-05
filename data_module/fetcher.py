@@ -192,6 +192,86 @@ class DataFetcher:
             logger.error(f"❌ Failed to fetch historical  {str(e)}")
             return None
 
+    def get_historical_data(self, instrument: str, interval: str, bars: int) -> Optional[pd.DataFrame]:
+        """
+        Get historical data with bars-based signature (for choppy session filter).
+        
+        Args:
+            instrument: 'NIFTY', 'BANKNIFTY', or 'FINNIFTY'
+            interval: '5m', '15m', etc
+            bars: Number of bars needed
+            
+        Returns:
+            DataFrame with OHLCV or None
+        """
+        # Convert bars to period
+        # Rough estimate: 78 5-min bars per trading day
+        if interval == "5m":
+            days = max(1, (bars // 78) + 1)
+        elif interval == "15m":
+            days = max(1, (bars // 26) + 1)
+        elif interval == "1h":
+            days = max(2, (bars // 6) + 1)
+        else:
+            days = 5
+        
+        period = f"{days}d"
+        df = self.fetch_historical_data(instrument, period, interval)
+        
+        if df is not None and not df.empty:
+            # Return last N bars
+            return df.tail(bars)
+        return df
+
+    def get_previous_day_stats(self, instrument: str) -> Optional[Dict]:
+        """
+        Fetch Previous Day High (PDH) and Low (PDL).
+        """
+        try:
+            df = self.fetch_historical_data(instrument, period="5d", interval="1d")
+            if df is None or len(df) < 2:
+                return None
+            
+            # Get previous day (last completed candle)
+            prev_day = df.iloc[-2]
+            
+            return {
+                "pdh": prev_day["high"],
+                "pdl": prev_day["low"],
+                "pdc": prev_day["close"],
+                "date": prev_day.name.strftime("%Y-%m-%d")
+            }
+        except Exception as e:
+            logger.error(f"❌ Failed to fetch PDH/PDL for {instrument}: {str(e)}")
+            return None
+
+    def get_opening_range_stats(self, instrument: str) -> Optional[Dict]:
+        """
+        Fetch High/Low of the first 5-min and 15-min candles of the current day.
+        """
+        try:
+            # Fetch today's data (1d period, 5m interval)
+            df_5m = self.fetch_historical_data(instrument, period="1d", interval="5m")
+            df_15m = self.fetch_historical_data(instrument, period="1d", interval="15m")
+            
+            stats = {}
+            
+            if df_5m is not None and not df_5m.empty:
+                first_5m = df_5m.iloc[0]
+                stats["orb_5m_high"] = first_5m["high"]
+                stats["orb_5m_low"] = first_5m["low"]
+                
+            if df_15m is not None and not df_15m.empty:
+                first_15m = df_15m.iloc[0]
+                stats["orb_15m_high"] = first_15m["high"]
+                stats["orb_15m_low"] = first_15m["low"]
+                
+            return stats if stats else None
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to fetch Opening Range for {instrument}: {str(e)}")
+            return None
+
     # =====================================================================
     # DATA VALIDATION
     # =====================================================================
@@ -277,10 +357,25 @@ class DataFetcher:
         """
         try:
             df = df.copy()
-            df.columns = [c.lower() for c in df.columns]
+            
+            # Handle MultiIndex columns from yfinance
+            if isinstance(df.columns, pd.MultiIndex):
+                # Flatten multi-index columns (e.g., ('Close', 'NIFTY') -> 'Close')
+                df.columns = df.columns.get_level_values(0)
+            
+            # Rename 'Adj Close' to 'Close' if 'Close' is missing
+            if "Close" in df.columns and "Adj Close" in df.columns:
+                # If both exist, drop 'Adj Close' and keep 'Close'
+                df = df.drop(columns=["Adj Close"])
+            elif "Adj Close" in df.columns:
+                # If only 'Adj Close' exists, rename it to 'Close'
+                df = df.rename(columns={"Adj Close": "Close"})
+            
+            # Lowercase all column names
+            df.columns = [str(c).lower() for c in df.columns]
 
             if not {"open", "high", "low", "close"}.issubset(df.columns):
-                logger.warning("⚠️  preprocess_ohlcv: missing OHLC columns")
+                logger.warning(f"⚠️  preprocess_ohlcv: missing OHLC columns. Have: {list(df.columns)}")
                 return df
 
             df["hl_range"] = df["high"] - df["low"]
