@@ -24,7 +24,11 @@ class OptionChainFetcher:
         })
         self.cache = {}
         self.cache_time = {}
-        self.cache_ttl = 60  # 1 minute cache
+        self.cache_ttl = 300  # 5 minutes (increased from 60 for production stability)
+        
+        # NEW: Emergency cache for fallback when both Fyers AND NSE fail
+        self.last_valid_data = {}
+        self.degraded_mode = False
         
         # Initial visit to set cookies
         try:
@@ -32,7 +36,7 @@ class OptionChainFetcher:
         except Exception as e:
             logger.warning(f"⚠️ Initial NSE visit failed: {e}")
             
-        # Initialize Fyers App for fallback
+        # Initialize Fyers App for PRIMARY data source
         self.fyers_app = FyersApp(app_id=FYERS_CLIENT_ID)
 
     def _is_cache_valid(self, key: str) -> bool:
@@ -58,6 +62,7 @@ class OptionChainFetcher:
         
         cache_key = f"oc_{symbol}"
         if self._is_cache_valid(cache_key):
+            self.degraded_mode = False  # Reset if cache is working
             return self.cache[cache_key]
 
         # ----------------------------------------
@@ -67,6 +72,9 @@ class OptionChainFetcher:
         if data:
             self.cache[cache_key] = data
             self.cache_time[cache_key] = time.time()
+            # Store as emergency backup
+            self.last_valid_data[cache_key] = data
+            self.degraded_mode = False
             return data
 
         # ----------------------------------------
@@ -100,12 +108,30 @@ class OptionChainFetcher:
             # Cache result
             self.cache[cache_key] = data
             self.cache_time[cache_key] = time.time()
+            # Store as emergency backup
+            self.last_valid_data[cache_key] = data
+            self.degraded_mode = False
             
             return data
             
         except Exception as e:
             logger.error(f"❌ Failed to fetch option chain for {symbol}: {e}")
+            
+            # ----------------------------------------
+            # EMERGENCY FALLBACK: Use last known good data
+            # ----------------------------------------
+            if cache_key in self.last_valid_data:
+                logger.warning(f"⚠️ Using STALE option chain data (>5min old) for {symbol}")
+                self.degraded_mode = True
+                return self.last_valid_data[cache_key]
+            
+            logger.critical(f"❌ NO OPTION CHAIN DATA AVAILABLE for {symbol}")
+            self.degraded_mode = True
             return None
+    
+    def is_healthy(self) -> bool:
+        """Check if option chain fetcher is working normally."""
+        return not self.degraded_mode
 
     def fetch_fyers_data(self, instrument: str) -> Optional[Dict]:
         """Fetch and transform data from Fyers."""

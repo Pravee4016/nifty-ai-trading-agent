@@ -84,8 +84,18 @@ class SignalPipeline:
             )
             
             if recent_count >= MAX_SAME_DIRECTION_ALERTS:
-                 logger.info(f"⏭️  Suppressing {direction_check} signals for {instrument} (Correlation Limit Hit)")
-                 return []
+                # NEW: Check for fresh market structure
+                has_new_structure = self._validate_fresh_structure(
+                    raw_signals,
+                    technical_context,
+                    direction_check
+                )
+                
+                if not has_new_structure:
+                    logger.info(f"⏭️  Suppressing {direction_check} signals (Correlation Limit + No New Structure)")
+                    return []
+                else:
+                    logger.info(f"✅ Allowing {direction_check} signal (Fresh Structure Detected)")
 
 
         # Step 3: Conflict Resolution
@@ -129,6 +139,66 @@ class SignalPipeline:
             processed_signals.append(signal)
 
         return processed_signals
+    
+    def _validate_fresh_structure(self, signals: List[Dict], context: Dict, direction: str) -> bool:
+        """
+        Check if signal represents fresh market structure.
+        
+        Returns True if:
+        - New higher-high (for LONG) or lower-low (for SHORT)
+        - VWAP reclaim
+        - ORB high/low break
+        - Volume surge (2x average)
+        """
+        try:
+            df = context.get("df_5m")
+            if df is None or len(df) < 2:
+                return False
+            
+            current_price = df["close"].iloc[-1]
+            vwap = context.get("vwap_5m", 0)
+            
+            if direction == "BULLISH":
+                # Check for higher high
+                recent_high = df["high"].iloc[-10:].max()
+                if current_price > recent_high:
+                    logger.debug(f"✅ New Higher High detected: {current_price:.2f}")
+                    return True
+                
+                # Check for VWAP reclaim
+                if vwap > 0:
+                    prev_close = df["close"].iloc[-2]
+                    if current_price > vwap and prev_close < vwap:
+                        logger.debug(f"✅ VWAP Reclaim detected ({vwap:.2f})")
+                        return True
+            
+            elif direction == "BEARISH":
+                # Check for lower low
+                recent_low = df["low"].iloc[-10:].min()
+                if current_price < recent_low:
+                    logger.debug(f"✅ New Lower Low detected: {current_price:.2f}")
+                    return True
+                
+                # Check for VWAP breakdown
+                if vwap > 0:
+                    prev_close = df["close"].iloc[-2]
+                    if current_price < vwap and prev_close > vwap:
+                        logger.debug(f"✅ VWAP Breakdown detected ({vwap:.2f})")
+                        return True
+            
+            # Check volume surge
+            if "volume" in df.columns and df["volume"].sum() > 0:
+                avg_volume = df["volume"].iloc[-20:-1].mean()
+                current_volume = df["volume"].iloc[-1]
+                if current_volume > avg_volume * 2.0:
+                    logger.debug(f"✅ Volume Surge detected: {current_volume:.0f} vs avg {avg_volume:.0f}")
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Fresh structure validation failed: {e}")
+            return False
 
     def resolve_conflicts(self, signals: List[Dict], option_metrics: Dict) -> List[Dict]:
         """

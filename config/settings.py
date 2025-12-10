@@ -43,25 +43,73 @@ INSTRUMENTS = {
     "NIFTY": {
         "symbol": "NIFTY 50",
         "display_name": "Nifty 50",
-        "tick_size": 0.05,
+        "tick_size": 0.05,  # Legacy - use get_tick_size() instead
         "lot_size": 75,
         "active": True,
     },
     "BANKNIFTY": {
         "symbol": "BANKNIFTY",
         "display_name": "Bank Nifty",
-        "tick_size": 0.05,
+        "tick_size": 0.05,  # Legacy - use get_tick_size() instead
         "lot_size": 15,
         "active": False,
     },
     "FINNIFTY": {
         "symbol": "FINNIFTY",
         "display_name": "Fin Nifty",
-        "tick_size": 0.05,
+        "tick_size": 0.05,  # Legacy - use get_tick_size() instead
         "lot_size": 40,
         "active": False,  # Enable when ready
     },
 }
+
+# ============================================================================
+# TICK SIZE MAPPING (Spot vs Options)
+# ============================================================================
+
+# CRITICAL: Spot instruments trade in 1-point increments, NOT 0.05
+# 0.05 tick size is ONLY for options (CE/PE)
+TICK_SIZE_MAP = {
+    "NIFTY_SPOT": 1.0,           # NIFTY spot/futures move in 1.0 point increments
+    "NIFTY_OPTION": 0.05,        # NIFTY options (CE/PE) trade in 0.05 ticks
+    "BANKNIFTY_SPOT": 1.0,       # BankNifty spot/futures
+    "BANKNIFTY_OPTION": 0.05,    # BankNifty options
+    "FINNIFTY_SPOT": 1.0,        # FinNifty spot/futures
+    "FINNIFTY_OPTION": 0.05,     # FinNifty options
+}
+
+
+def get_tick_size(instrument: str, is_option: bool = False) -> float:
+    """
+    Get correct tick size for instrument and product type.
+    
+    Args:
+        instrument: Instrument name (e.g., "NIFTY", "BANKNIFTY", "FINNIFTY")
+        is_option: True if trading options (CE/PE), False for spot/futures
+    
+    Returns:
+        Tick size (1.0 for spot, 0.05 for options)
+    
+    Example:
+        >>> get_tick_size("NIFTY", is_option=False)  # Spot/Futures
+        1.0
+        >>> get_tick_size("NIFTY", is_option=True)   # Options
+        0.05
+    """
+    base = instrument.upper()
+    
+    # Normalize instrument name
+    if "BANK" in base:
+        key = "BANKNIFTY"
+    elif "FIN" in base:
+        key = "FINNIFTY"
+    else:
+        key = "NIFTY"
+    
+    suffix = "_OPTION" if is_option else "_SPOT"
+    tick_size = TICK_SIZE_MAP.get(f"{key}{suffix}", 1.0)
+    
+    return tick_size
 
 # Trading hours (IST)
 MARKET_OPEN_TIME = "09:15"  # Market opens

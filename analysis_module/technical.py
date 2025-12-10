@@ -13,22 +13,26 @@ from dataclasses import dataclass
 from enum import Enum
 
 from config.settings import (
-    SR_CLUSTER_TOLERANCE,
-    MIN_SR_TOUCHES,
+    MAX_SAME_DIRECTION_ALERTS,
+    MIN_SIGNAL_CONFIDENCE,
     LOOKBACK_BARS,
-    MIN_VOLUME_RATIO,
+    MIN_SR_TOUCHES,
     VOLUME_PERIOD,
+    MIN_VOLUME_RATIO,
+    SR_CLUSTER_TOLERANCE,
+    BREAKOUT_CONFIRMATION_CANDLES,
     FALSE_BREAKOUT_RETRACEMENT,
     RETEST_ZONE_PERCENT,
     MIN_RSI_BULLISH,
     MAX_RSI_BEARISH,
     RSI_PERIOD,
     ATR_PERIOD,
-    EMA_SHORT,
-    EMA_LONG,
-    MIN_RISK_REWARD_RATIO,
     ATR_SL_MULTIPLIER,
     ATR_TP_MULTIPLIER,
+    EMA_SHORT,
+    EMA_LONG,
+    get_tick_size,  # NEW: for correct tick size calculation
+    MIN_RISK_REWARD_RATIO,
     DEBUG_MODE,
 )
 
@@ -299,6 +303,9 @@ class TechnicalAnalyzer:
                 
             # If trend is weak, stop here
             if not is_strong_trend:
+                # Round to tick size before returning
+                tick_size = get_tick_size(self.instrument, is_option=False)
+                t1 = round(t1 / tick_size) * tick_size
                 return t1, 0.0, 0.0
                 
             # --- T2 ---
@@ -331,6 +338,9 @@ class TechnicalAnalyzer:
                 
             # If trend is weak, stop here
             if not is_strong_trend:
+                # Round to tick size before returning
+                tick_size = get_tick_size(self.instrument, is_option=False)
+                t1 = round(t1 / tick_size) * tick_size
                 return t1, 0.0, 0.0
                 
             # --- T2 ---
@@ -348,6 +358,13 @@ class TechnicalAnalyzer:
                 t3 = entry_price - (risk * 4.0)
             if t3 >= t2:
                 t3 = min(t3, t2 - (risk * 1.0))
+        
+        # CRITICAL: Round all targets to correct tick size
+        # NIFTY spot uses 1.0, NOT 0.05
+        tick_size = get_tick_size(self.instrument, is_option=False)
+        t1 = round(t1 / tick_size) * tick_size
+        t2 = round(t2 / tick_size) * tick_size if t2 > 0 else 0.0
+        t3 = round(t3 / tick_size) * tick_size if t3 > 0 else 0.0
                 
         return t1, t2, t3
 
@@ -767,8 +784,8 @@ class TechnicalAnalyzer:
             
             # Check if volume data exists
             if df["volume"].sum() == 0:
-                logger.debug("⚠️ No volume data - bypassing surge check")
-                return True, 1.0, "Index (No Vol)"
+                logger.debug("⚠️ No volume data - Treating as NO SURGE (Require Consolidation)")
+                return False, 0.0, "Index (No Vol)"
             
             current_vol = float(df["volume"].iloc[-1])
             avg_vol_20 = float(df["volume"].tail(20).mean())
@@ -777,9 +794,9 @@ class TechnicalAnalyzer:
             surge_ratio = current_vol / avg_vol_20 if avg_vol_20 > 0 else 0
             
             # Surge conditions
-            # Surge conditions
-            # Lowered from 1.5 to 1.2 to catch sustained moves with decent volume
-            above_average = surge_ratio >= 1.2
+            # Restored to use configured MIN_VOLUME_RATIO (default 1.5) as 1.2 was too lenient
+            # causing too many false breakout signals
+            above_average = surge_ratio >= MIN_VOLUME_RATIO
             above_recent = current_vol > max_vol_5
             
             has_surge = above_average and above_recent
@@ -788,7 +805,7 @@ class TechnicalAnalyzer:
                 description = f"Volume surge: {surge_ratio:.2f}x avg, highest in 5 bars"
                 logger.info(f"📊 {description}")
             else:
-                description = f"No surge: {surge_ratio:.2f}x avg (need 1.5x + highest in 5)"
+                description = f"No surge: {surge_ratio:.2f}x avg (need {MIN_VOLUME_RATIO}x + highest in 5)"
                 logger.debug(f"⏭️ {description}")
             
             return has_surge, surge_ratio, description
