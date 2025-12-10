@@ -36,6 +36,8 @@ from config.settings import (
     DEBUG_MODE,
 )
 
+from analysis_module.adaptive_thresholds import AdaptiveThresholds
+
 logger = logging.getLogger(__name__)
 
 
@@ -654,6 +656,30 @@ class TechnicalAnalyzer:
                     "price_above_vwap": price_above_vwap,
                     "price_above_ema20": price_above_ema20,
                 })
+            
+            # ====================
+            # Adaptive RSI Thresholds (Phase 2)
+            # ====================
+            # Calculate ATR percentile and get dynamic RSI thresholds
+            if "atr" in df_5m_copy.columns and len(df_5m_copy) >= 60:
+                current_atr = float(df_5m_copy["atr"].iloc[-1])
+                atr_percentile = AdaptiveThresholds.calculate_atr_percentile(
+                    df_5m_copy, current_atr, lookback=60
+                )
+                rsi_long_threshold, rsi_short_threshold = AdaptiveThresholds.get_rsi_thresholds(
+                    vix=None,  # VIX not available yet (Phase 3)
+                    atr_percentile=atr_percentile
+                )
+                
+                context.update({
+                    "atr_percentile": atr_percentile,
+                    "rsi_long_threshold": rsi_long_threshold,
+                    "rsi_short_threshold": rsi_short_threshold,
+                })
+                
+                logger.info(
+                    f"📊 Adaptive RSI: ATR %ile {atr_percentile:.1f} → RSI {rsi_short_threshold}/{rsi_long_threshold}"
+                )
 
             # ====================
             # Previous Day Trend
@@ -987,10 +1013,12 @@ class TechnicalAnalyzer:
                             return None
                             
                         # Filter: MTF Trend Alignment
-                        # EXCEPTION: ORB Breakouts set the trend
+                        # Use ADAPTIVE RSI thresholds from context (fallback to static)
+                        rsi_long_threshold = higher_tf_context.get("rsi_long_threshold", MIN_RSI_BULLISH)
+                        
                         mtf_ok = (
-                            trend_dir == "UP"
-                            and rsi_15 >= MIN_RSI_BULLISH
+                            trend_dir in ["UP", "NEUTRAL"]
+                            and rsi_15 >= rsi_long_threshold  # Adaptive threshold
                         )
                         
                         if is_major_level: mtf_ok = True
@@ -1013,9 +1041,9 @@ class TechnicalAnalyzer:
                             # Strong Trend Logic
                             is_strong_trend = (
                                 has_surge 
-                                and trend_dir == "UP" 
-                                and rsi_15 >= 60 
-                                and rsi_5 >= 60
+                                and (orb_direction == "BULLISH" or trend_dir in ["UP", "NEUTRAL"])
+                                and rsi_15 >= rsi_long_threshold
+                                and rsi_5 >= rsi_long_threshold
                             )
                             
                             tp1, tp2, tp3 = self._calculate_multi_targets(
@@ -1032,7 +1060,8 @@ class TechnicalAnalyzer:
                                 confidence += 10
                             if is_consolidating:
                                 confidence += 10
-                            if rsi_5 >= MIN_RSI_BULLISH:
+                            # RSI confirmation for 5m breakout
+                            if rsi_5 >= rsi_long_threshold:  # Adaptive threshold
                                 confidence += 5
                             if trend_dir == "UP":
                                 confidence += 10
@@ -1122,10 +1151,13 @@ class TechnicalAnalyzer:
                         f"Vol: {surge_ratio:.1f}x"
                     )
                     return None
-                    
+                 # Filter: MTF Alignment
+                # Use ADAPTIVE RSI thresholds from context (fallback to static)
+                rsi_short_threshold = higher_tf_context.get("rsi_short_threshold", MAX_RSI_BEARISH)
+                
                 mtf_ok = (
-                    trend_dir == "DOWN"
-                    and rsi_15 <= MAX_RSI_BEARISH
+                    trend_dir in ["DOWN", "NEUTRAL"]
+                    and rsi_15 <= rsi_short_threshold  # Adaptive threshold
                 )
                 
                 if is_major_level: mtf_ok = True
@@ -1168,7 +1200,9 @@ class TechnicalAnalyzer:
                         confidence += 10
                     if is_consolidating:
                         confidence += 10
-                    if rsi_5 <= MAX_RSI_BEARISH:
+                      # RSI confirmation for 5m breakdown
+                    rsi_short_threshold = higher_tf_context.get("rsi_short_threshold", MAX_RSI_BEARISH)
+                    if rsi_5 <= rsi_short_threshold:  # Adaptive threshold
                         confidence += 5
                     if trend_dir == "DOWN":
                         confidence += 10
@@ -2154,10 +2188,11 @@ class TechnicalAnalyzer:
                         is_valid_setup = True
                         setup_reason = "Trend Alignment"
                     elif trend_dir == "DOWN":
-                        # Counter-trend checks
+                        # Counter-trend checks - use adaptive threshold
                         # Require Oversold RSI OR Volume Surge
+                        rsi_short_threshold = higher_tf_context.get("rsi_short_threshold", MAX_RSI_BEARISH)
                         vol_surge, _, _ = self._detect_volume_surge(df)
-                        if rsi_15 < 40:
+                        if rsi_15 < rsi_short_threshold:  # Adaptive: normally 40, but 35 in high volatility
                             is_valid_setup = True
                             setup_reason = f"Counter-Trend (RSI {rsi_15:.1f} Oversold)"
                         elif vol_surge:
@@ -2265,10 +2300,10 @@ class TechnicalAnalyzer:
                         is_valid_setup = True
                         setup_reason = "Trend Alignment"
                     elif trend_dir == "UP":
-                        # Counter-trend checks
-                        # Require Overbought RSI OR Volume Surge
+                        # Counter-trend bearish pin bar - use adaptive threshold
+                        rsi_long_threshold = higher_tf_context.get("rsi_long_threshold", MIN_RSI_BULLISH)
                         vol_surge, _, _ = self._detect_volume_surge(df)
-                        if rsi_15 > 60:
+                        if rsi_15 > rsi_long_threshold:  # Adaptive: normally 60, but 65 in high volatility
                             is_valid_setup = True
                             setup_reason = f"Counter-Trend (RSI {rsi_15:.1f} Overbought)"
                         elif vol_surge:
