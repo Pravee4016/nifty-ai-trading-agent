@@ -94,6 +94,78 @@ class DataFetcher:
         logger.error(f"❌ All data sources failed for {instrument}")
         return None
 
+    # =====================================================================
+    # INDIA VIX FETCHING (Phase 3)
+    # =====================================================================
+
+    def fetch_india_vix(self) -> Optional[float]:
+        """
+        Fetch India VIX value for adaptive threshold calculations.
+        
+        Priority:
+        1. yfinance (^NSEIV)
+        2. Fyers API (NSE:INDIAVIX-INDEX)
+        3. Return None (fall back to ATR percentile)
+        
+        Returns:
+            float: VIX value or None
+        """
+        # Try cache first (5-minute TTL)
+        cache_key = "india_vix"
+        if self._is_cache_valid(cache_key, ttl=300):
+            return self.cache[cache_key]
+        
+        # 1. Try yfinance
+        vix = self._fetch_vix_yfinance()
+        if vix:
+            self.cache[cache_key] = vix
+            self.cache_time[cache_key] = time.time()
+            return vix
+        
+        # 2. Try Fyers
+        vix = self._fetch_vix_fyers()
+        if vix:
+            self.cache[cache_key] = vix
+            self.cache_time[cache_key] = time.time()
+            return vix
+        
+        logger.warning("⚠️ VIX fetch failed from all sources, will use ATR percentile fallback")
+        return None
+
+    def _fetch_vix_yfinance(self) -> Optional[float]:
+        """Fetch VIX from yfinance."""
+        try:
+            vix_ticker = yf.Ticker("^NSEIV")
+            info = vix_ticker.info
+            vix_value = info.get('regularMarketPrice') or info.get('previousClose')
+            
+            if vix_value and vix_value > 0:
+                logger.debug(f"📊 VIX (yfinance): {vix_value:.2f}")
+                return float(vix_value)
+            return None
+        except Exception as e:
+            logger.debug(f"VIX yfinance fetch failed: {e}")
+            return None
+
+    def _fetch_vix_fyers(self) -> Optional[float]:
+        """Fetch VIX from Fyers API."""
+        try:
+            # Fyers symbol for India VIX
+            quote = self.fyers_app.get_quote("NSE:INDIAVIX-INDEX")
+            if not quote:
+                return None
+            
+            data_source = quote.get('v', quote) if isinstance(quote.get('v'), dict) else quote
+            vix_value = data_source.get('lp') or data_source.get('last_price')
+            
+            if vix_value and vix_value > 0:
+                logger.debug(f"📊 VIX (Fyers): {vix_value:.2f}")
+                return float(vix_value)
+            return None
+        except Exception as e:
+            logger.debug(f"VIX Fyers fetch failed: {e}")
+            return None
+
     def _fetch_fyers_data(self, instrument: str) -> Optional[Dict]:
         """Fetch from Fyers."""
         try:

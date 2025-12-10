@@ -216,8 +216,16 @@ class NiftyTradingAgent:
                 return result
             # --------------------------------------
 
+            # --- FETCH INDIA VIX (Phase 3) ---
+            india_vix = self.fetcher.fetch_india_vix()
+            if india_vix:
+                logger.info(f"📊 India VIX: {india_vix:.2f}")
+
             analyzer = TechnicalAnalyzer(instrument)
             higher_tf_context = analyzer.get_higher_tf_context(df_15m, df_5m, df_daily)
+            
+            # Add VIX to context for adaptive thresholds
+            higher_tf_context["india_vix"] = india_vix
             
             # Update global market context for AI
             self.market_context[instrument] = {
@@ -736,8 +744,8 @@ class NiftyTradingAgent:
             # Get AI forecast
             summary["ai_forecast"] = self._get_ai_market_forecast(summary)
             
-            # Get performance stats
-            summary["performance"] = self.trade_tracker.get_stats(days=1)
+            # Get performance stats (Today only)
+            summary["performance"] = self.trade_tracker.get_stats(days=0)
             
             return summary
             

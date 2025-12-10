@@ -658,28 +658,41 @@ class TechnicalAnalyzer:
                 })
             
             # ====================
-            # Adaptive RSI Thresholds (Phase 2)
+            # Adaptive RSI Thresholds (Phase 2 + Phase 3)
             # ====================
             # Calculate ATR percentile and get dynamic RSI thresholds
+            # Phase 3: Now uses VIX if available, falls back to ATR percentile
             if "atr" in df_5m_copy.columns and len(df_5m_copy) >= 60:
                 current_atr = float(df_5m_copy["atr"].iloc[-1])
                 atr_percentile = AdaptiveThresholds.calculate_atr_percentile(
                     df_5m_copy, current_atr, lookback=60
                 )
+                
+                # NEW: Get VIX from context (passed from agent)
+                india_vix = context.get("india_vix")
+                
+                # Use VIX if available, otherwise ATR percentile
                 rsi_long_threshold, rsi_short_threshold = AdaptiveThresholds.get_rsi_thresholds(
-                    vix=None,  # VIX not available yet (Phase 3)
-                    atr_percentile=atr_percentile
+                    vix=india_vix,  # Will use this if not None
+                    atr_percentile=atr_percentile  # Fallback
                 )
                 
                 context.update({
                     "atr_percentile": atr_percentile,
+                    "india_vix": india_vix,  # Store for reference
                     "rsi_long_threshold": rsi_long_threshold,
                     "rsi_short_threshold": rsi_short_threshold,
                 })
                 
-                logger.info(
-                    f"📊 Adaptive RSI: ATR %ile {atr_percentile:.1f} → RSI {rsi_short_threshold}/{rsi_long_threshold}"
-                )
+                # Enhanced logging with VIX info
+                if india_vix:
+                    logger.info(
+                        f"📊 Adaptive RSI (VIX): VIX {india_vix:.1f} → RSI {rsi_short_threshold}/{rsi_long_threshold}"
+                    )
+                else:
+                    logger.info(
+                        f"📊 Adaptive RSI (ATR): ATR %ile {atr_percentile:.1f} → RSI {rsi_short_threshold}/{rsi_long_threshold}"
+                    )
 
             # ====================
             # Previous Day Trend
