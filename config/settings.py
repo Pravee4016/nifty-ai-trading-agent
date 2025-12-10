@@ -17,6 +17,14 @@ load_dotenv()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "YOUR_GROQ_KEY_HERE")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "YOUR_CHAT_ID_HERE")
+TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID") # Optional Channel ID
+
+# ============================================================================
+# FYERS CONFIGURATION
+# ============================================================================
+FYERS_CLIENT_ID = os.getenv("FYERS_CLIENT_ID", "DURQKS8D17-100") # Default from codebase
+FYERS_ACCESS_TOKEN = os.getenv("FYERS_ACCESS_TOKEN")
+
 
 # ============================================================================
 # MARKET PARAMETERS
@@ -87,7 +95,7 @@ RETEST_ZONE_PERCENT = float(os.getenv("RETEST_ZONE_PERCENT", 0.3))
 # Support/Resistance Configuration
 SR_CLUSTER_TOLERANCE = 0.1  # 0.1% difference = same cluster
 MIN_SR_TOUCHES = 2
-LOOKBACK_BARS = 100
+LOOKBACK_BARS = 2000  # Increased to use full 5-day history (was 100)
 
 # Momentum Configuration
 MIN_RSI_BULLISH = int(os.getenv("MIN_MOMENTUM_RSI", 60))
@@ -123,7 +131,7 @@ STOCH_SMOOTH_D = 3
 # ============================================================================
 
 MIN_RISK_REWARD_RATIO = 1.5
-MAX_DAILY_TRADES = 5
+MAX_DAILY_TRADES = 999  # Effectively unlimited (rely on robust filtering)
 MIN_SIGNAL_CONFIDENCE = int(os.getenv("MIN_SIGNAL_CONFIDENCE", 65))
 
 DEFAULT_POSITION_SIZE = 1
@@ -173,17 +181,6 @@ SCHEDULE_CRON = "5 9 * * MON-FRI"
 INTRADAY_MONITORING_INTERVAL = 5  # minutes
 
 # ============================================================================
-# DATA STORAGE & CACHING
-# ============================================================================
-
-CACHE_DIR = "./cache"
-CACHE_DATA_TTL = 3600  # seconds
-
-LOG_DIR = "./logs"
-LOG_LEVEL = os.getenv("LOGLEVEL", "INFO")
-LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
-
 # ============================================================================
 # CLOUD DEPLOYMENT
 # ============================================================================
@@ -192,8 +189,34 @@ GOOGLE_CLOUD_PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT", "")
 CLOUD_FUNCTION_REGION = os.getenv("CLOUD_FUNCTION_REGION", "us-central1")
 FIRESTORE_DATABASE = os.getenv("FIRESTORE_DATABASE", "")
 
-DEPLOYMENT_MODE = os.getenv("DEPLOYMENT_MODE", "LOCAL")  # LOCAL, GCP, RENDER
+# Auto-detect GCP Environment (Cloud Run / Cloud Functions)
+IS_GCP = os.getenv("K_SERVICE") is not None or os.getenv("FUNCTION_NAME") is not None
+
+# Override DEPLOYMENT_MODE if in GCP
+if IS_GCP:
+    DEPLOYMENT_MODE = "GCP"
+else:
+    DEPLOYMENT_MODE = os.getenv("DEPLOYMENT_MODE", "LOCAL")
+
 ENABLE_CLOUD_LOGGING = DEPLOYMENT_MODE != "LOCAL"
+
+# ============================================================================
+# DATA STORAGE & CACHING
+# ============================================================================
+
+if DEPLOYMENT_MODE == "GCP" or IS_GCP:
+    # Google Cloud Functions only allows writing to /tmp
+    CACHE_DIR = "/tmp/cache"
+    LOG_DIR = "/tmp/logs"
+else:
+    CACHE_DIR = "./cache"
+    LOG_DIR = "./logs"
+
+CACHE_DATA_TTL = 3600  # seconds
+
+LOG_LEVEL = os.getenv("LOGLEVEL", "INFO")
+LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 # ============================================================================
 # DEBUG & DEVELOPMENT
@@ -211,7 +234,7 @@ MAX_ALERTS_PER_TYPE = int(os.getenv("MAX_ALERTS_PER_TYPE", "10"))  # Max per sig
 MAX_ALERTS_PER_INSTRUMENT = int(os.getenv("MAX_ALERTS_PER_INSTRUMENT", "15"))  # Max per instrument
 
 # Choppy Market Detection
-MIN_ATR_PERCENT = float(os.getenv("MIN_ATR_PERCENT", "0.3"))  # Min volatility for trading (ATR/price %)
+MIN_ATR_PERCENT = float(os.getenv("MIN_ATR_PERCENT", "0.06"))  # Min volatility for trading (ATR/price %)
 MAX_VWAP_CROSSES = int(os.getenv("MAX_VWAP_CROSSES", "4"))  # Max crosses in 10 bars = choppy
 
 # Correlation Limits
@@ -220,6 +243,22 @@ MAX_SAME_DIRECTION_ALERTS = int(os.getenv("MAX_SAME_DIRECTION_ALERTS", "3"))  # 
 SEND_TEST_ALERTS = os.getenv("SEND_TEST_ALERTS", "False").lower() == "true"
 DRY_RUN = os.getenv("DRY_RUN", "False").lower() == "true"
 VERBOSE = os.getenv("VERBOSE", "False").lower() == "true"
+
+# ============================================================================
+# PHASE 4: MANIPULATION DEFENSE
+# ============================================================================
+
+# Flash Crash Protection
+MAX_1MIN_MOVE_PCT = float(os.getenv("MAX_1MIN_MOVE_PCT", 0.4))  # 0.4% move in 1 min = Freeze
+CIRCUIT_BREAKER_PAUSE_MINS = 15
+
+# Expiry Day Gamma Guard ( Thursdays )
+EXPIRY_STOP_TIME = "14:00"  # Stop taking fresh entries after this time on Thursdays
+EXPIRY_RISK_ATR_MULTIPLIER = 1.0  # Tighter stops on Expiry
+
+# VIX Volatility Guard
+VIX_PANIC_LEVEL = 24.0
+VIX_LOW_LEVEL = 10.0
 
 
 def validate_config():

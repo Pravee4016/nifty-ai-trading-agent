@@ -1,0 +1,500 @@
+
+Container called exit(0).
+2025-12-10 09:16:43,999 | __main__ | INFO     |    AI Usage: 0 tokens used
+2025-12-10 09:16:43,999 | __main__ | INFO     |    Alerts Sent: 0
+2025-12-10 09:16:43,999 | __main__ | INFO     |    Signals: 0
+📈 STATISTICS
+2025-12-10 09:16:43,999 | __main__ | INFO     | 
+2025-12-10 09:16:43,999 | app.agent | INFO     | ======================================================================
+2025-12-10 09:16:43,999 | app.agent | INFO     | Errors: 0
+2025-12-10 09:16:43,999 | app.agent | INFO     | Alerts Sent: 0
+2025-12-10 09:16:43,999 | app.agent | INFO     | Total Signals Generated: 1
+2025-12-10 09:16:43,999 | app.agent | INFO     | Instruments Analyzed: 1
+2025-12-10 09:16:43,998 | app.agent | INFO     | Timestamp: 2025-12-10T09:16:38.487926
+2025-12-10 09:16:43,998 | app.agent | INFO     | ======================================================================
+2025-12-10 09:16:43,998 | app.agent | INFO     | 📊 ANALYSIS SUMMARY
+======================================================================
+2025-12-10 09:16:43,998 | app.agent | INFO     | 
+2025-12-10 09:16:42,722 | app.agent | INFO     | ✅ NIFTY analysis complete | 1 signals | 0 alerts sent
+2025-12-10 09:16:42,722 | app.agent | INFO     | ⏭️ Suppressing RETEST alert: Recent similar retest 55.4m ago
+2025-12-10 09:16:42,419 | ai_module.groq_analyzer | INFO     | 🤖 AI Analysis Complete (0.50s) | Confidence: 65%
+2025-12-10 09:16:41,916 | analysis_module.technical | INFO     | ✅ Volatility OK | ATR: 0.0849% (> 0.06%)
+2025-12-10 09:16:41,914 | analysis_module.technical | INFO     | 🔬 TechnicalAnalyzer initialized for NIFTY
+2025-12-10 09:16:41,914 | app.agent | INFO     | 📊 Option Metrics: PCR=0.6411, IV=None%, MaxPain=25850
+2025-12-10 09:16:41,913 | data_module.fyers_interface | INFO     | ✅ Fyers Option Chain fetched for NIFTY
+2025-12-10 09:16:41,608 | app.agent | INFO     | 🧬 Fetching Option Chain for NIFTY...
+2025-12-10 09:16:39,427 | analysis_module.technical | INFO     | ✅ Directional bias: SHORT
+2025-12-10 09:16:39,425 | analysis_module.technical | INFO     | 📊 INSIDE BAR PATTERN DETECTED | Validating setup...
+2025-12-10 09:16:39,424 | analysis_module.technical | INFO     | 🎯 RETEST SETUP | Resistance retest at 25773.45 (former support, role reversal) | Price: 25751.50 | Level: 25773.45 | Dist: 0.085%
+2025-12-10 09:16:39,424 | analysis_module.technical | INFO     | ⏭️ Skipping retest - poor R:R (1.03) < 1.5
+2025-12-10 09:16:39,424 | analysis_module.technical | INFO     | 🎯 RETEST SETUP | Support retest at 25731.48 (former resistance, role reversal) | Price: 25751.50 | Level: 25731.48 | Dist: 0.078%
+2025-12-10 09:16:39,424 | analysis_module.technical | INFO     | ✅ S/R Calculated | Supports: 13 [25731.4755859375, 25773.4501953125, 25814.033203125]... | Resistances: 11 [25788.69921875, 25861.807942708332, 25915.1875]...
+2025-12-10 09:16:39,422 | analysis_module.technical | INFO     | 📊 PDH/PDL | PDH: 25923.15 | PDL: 25728.05 | Gap% vs PDH(open): -0.23%
+2025-12-10 09:16:39,416 | analysis_module.technical | INFO     | 📊 PDH/PDL | PDH: 25923.15 | PDL: 25728.05 | Gap% vs PDH(open): -0.23%
+2025-12-10 09:16:39,405 | analysis_module.technical | INFO     | 📐 Higher TF context | Trend15m: DOWN | VWAP: 25751.50 (FLAT) | 20EMA: 25779.75 | PrevDay: FLAT
+2025-12-10 09:16:39,405 | analysis_module.technical | INFO     | 📊 Opening Range (15min) | High: 26186.90 | Low: 25751.50 | Range: 435.40
+2025-12-10 09:16:39,401 | analysis_module.technical | INFO     | 🔬 TechnicalAnalyzer initialized for NIFTY
+2025-12-10 09:16:39,396 | data_module.fetcher | INFO     | ✅ Historical data fetched: NIFTY | 5 candles
+2025-12-10 09:16:39,304 | data_module.fetcher | INFO     | ✅ Historical data fetched: NIFTY | 248 candles
+2025-12-10 09:16:39,207 | data_module.fetcher | INFO     | ✅ Historical data fetched: NIFTY | 366 candles
+2025-12-10 09:16:38,488 | app.agent | INFO     | ----------------------------------------------------------------------
+🔍 Analyzing: NIFTY
+2025-12-10 09:16:38,487 | app.agent | INFO     | 
+2025-12-10 09:16:37,211 | app.agent | INFO     | ======================================================================
+📊 ANALYSIS STARTED | Instruments: ['NIFTY']
+2025-12-10 09:16:37,211 | app.agent | INFO     | 
+2025-12-10 09:16:36,898 | __main__ | INFO     | ✅ All connections successful
+2025-12-10 09:16:36,896 | telegram_module.bot_handler | INFO     | ✅ Telegram connection successful | Bot: NiftyLevelsAI
+2025-12-10 09:16:36,528 | telegram_module.bot_handler | INFO     | 🧪 Testing Telegram connection...
+🔌 Testing external connections...
+2025-12-10 09:16:36,412 | __main__ | INFO     | 
+2025-12-10 09:16:36,412 | app.agent | INFO     | Analysis start time: 09:05
+2025-12-10 09:16:36,412 | app.agent | INFO     | Timezone: Asia/Kolkata
+2025-12-10 09:16:36,412 | app.agent | INFO     | Mode: PRODUCTION
+2025-12-10 09:16:36,412 | app.agent | INFO     | ======================================================================
+2025-12-10 09:16:36,412 | app.agent | INFO     | 🤖 Nifty AI Trading Agent Initialized (Phase 3: AI Analyst)
+2025-12-10 09:16:36,412 | app.agent | INFO     | ======================================================================
+2025-12-10 09:16:36,412 | app.agent | INFO     | 📂 Loaded 8 recent alerts from Firestore
+2025-12-10 09:16:36,411 | data_module.persistence | INFO     | 📂 Loaded 8 active alerts for today from Firestore
+2025-12-10 09:16:34,365 | data_module.fyers_interface | INFO     | ✅ Fyers Model initialized
+2025-12-10 09:16:34,197 | data_module.persistence | INFO     | 💾 Firestore initialized | Project: nifty-trading-agent
+2025-12-10 09:16:34,194 | ai_module.groq_analyzer | INFO     | 🧠 Groq AI Initialized | Model: llama-3.3-70b-versatile
+2025-12-10 09:16:34,194 | telegram_module.bot_handler | INFO     | 🤖 TelegramBot initialized | Chat ID: 1067969031 | Channel: -1003359785282
+2025-12-10 09:16:34,142 | data_module.fetcher | INFO     | 🚀 DataFetcher initialized | Primary: Fyers | Fallback: YFinance
+2025-12-10 09:16:34,142 | data_module.fyers_interface | INFO     | ✅ Fyers Model initialized
+2025-12-10 09:16:34,140 | app.bootstrap | INFO     | 🔧 Bootstrapping NiftyTradingAgent...
+2025-12-10 09:16:34,140 | __main__ | INFO     | 🚀 Agent starting...
+
+Container called exit(0).
+2025-12-10 09:12:07,219 | __main__ | INFO     |    AI Usage: 0 tokens used
+2025-12-10 09:12:07,219 | __main__ | INFO     |    Alerts Sent: 0
+2025-12-10 09:12:07,218 | __main__ | INFO     |    Signals: 0
+📈 STATISTICS
+2025-12-10 09:12:07,218 | __main__ | INFO     | 
+2025-12-10 09:12:07,218 | app.agent | INFO     | ======================================================================
+2025-12-10 09:12:07,218 | app.agent | INFO     | Errors: 0
+2025-12-10 09:12:07,218 | app.agent | INFO     | Alerts Sent: 0
+2025-12-10 09:12:07,218 | app.agent | INFO     | Total Signals Generated: 0
+2025-12-10 09:12:07,218 | app.agent | INFO     | Instruments Analyzed: 1
+2025-12-10 09:12:07,218 | app.agent | INFO     | Timestamp: 2025-12-10T09:12:03.034535
+2025-12-10 09:12:07,217 | app.agent | INFO     | ======================================================================
+2025-12-10 09:12:07,217 | app.agent | INFO     | 📊 ANALYSIS SUMMARY
+======================================================================
+2025-12-10 09:12:07,217 | app.agent | INFO     | 
+2025-12-10 09:12:06,909 | app.agent | INFO     | ✅ NIFTY analysis complete | 0 signals | 0 alerts sent
+2025-12-10 09:12:06,908 | analysis_module.technical | INFO     | ✅ Volatility OK | ATR: 0.0865% (> 0.06%)
+2025-12-10 09:12:06,904 | analysis_module.technical | INFO     | 🔬 TechnicalAnalyzer initialized for NIFTY
+2025-12-10 09:12:06,903 | app.agent | INFO     | 📊 Option Metrics: PCR=0.6424, IV=None%, MaxPain=25850
+2025-12-10 09:12:06,902 | data_module.fyers_interface | INFO     | ✅ Fyers Option Chain fetched for NIFTY
+2025-12-10 09:12:06,360 | app.agent | INFO     | 🧬 Fetching Option Chain for NIFTY...
+2025-12-10 09:12:04,132 | analysis_module.technical | INFO     | ⏭️ Inside bar rejected: Inside bar too small (< 20% of mother bar)
+2025-12-10 09:12:04,132 | analysis_module.technical | INFO     | 📊 INSIDE BAR PATTERN DETECTED | Validating setup...
+2025-12-10 09:12:04,132 | analysis_module.technical | INFO     | 🎯 RETEST SETUP | Support retest at 25731.48 (former resistance, role reversal) | Price: 25759.50 | Level: 25731.48 | Dist: 0.109%
+2025-12-10 09:12:04,131 | analysis_module.technical | INFO     | ✅ S/R Calculated | Supports: 13 [25731.4755859375, 25773.4501953125, 25814.033203125]... | Resistances: 10 [25861.807942708332, 25915.1875, 25952.008138020832]...
+2025-12-10 09:12:04,128 | analysis_module.technical | INFO     | 📊 PDH/PDL | PDH: 25923.15 | PDL: 25728.05 | Gap% vs PDH(open): -0.23%
+2025-12-10 09:12:04,121 | analysis_module.technical | INFO     | 📊 PDH/PDL | PDH: 25923.15 | PDL: 25728.05 | Gap% vs PDH(open): -0.23%
+2025-12-10 09:12:04,103 | analysis_module.technical | INFO     | 📐 Higher TF context | Trend15m: DOWN | VWAP: 25759.50 (FLAT) | 20EMA: 25783.53 | PrevDay: FLAT
+2025-12-10 09:12:04,102 | analysis_module.technical | INFO     | 📊 Opening Range (15min) | High: 26186.90 | Low: 25811.55 | Range: 375.35
+2025-12-10 09:12:04,097 | analysis_module.technical | INFO     | 🔬 TechnicalAnalyzer initialized for NIFTY
+2025-12-10 09:12:04,088 | data_module.fetcher | INFO     | ✅ Historical data fetched: NIFTY | 5 candles
+2025-12-10 09:12:04,000 | data_module.fetcher | INFO     | ✅ Historical data fetched: NIFTY | 247 candles
+2025-12-10 09:12:03,882 | data_module.fetcher | INFO     | ✅ Historical data fetched: NIFTY | 365 candles
+2025-12-10 09:12:03,034 | app.agent | INFO     | ----------------------------------------------------------------------
+🔍 Analyzing: NIFTY
+2025-12-10 09:12:03,034 | app.agent | INFO     | 
+2025-12-10 09:12:01,776 | app.agent | INFO     | ======================================================================
+📊 ANALYSIS STARTED | Instruments: ['NIFTY']
+2025-12-10 09:12:01,776 | app.agent | INFO     | 
+2025-12-10 09:12:01,457 | __main__ | INFO     | ✅ All connections successful
+2025-12-10 09:12:01,456 | telegram_module.bot_handler | INFO     | ✅ Telegram connection successful | Bot: NiftyLevelsAI
+2025-12-10 09:12:01,083 | telegram_module.bot_handler | INFO     | 🧪 Testing Telegram connection...
+🔌 Testing external connections...
+2025-12-10 09:12:00,959 | __main__ | INFO     | 
+2025-12-10 09:12:00,959 | app.agent | INFO     | Analysis start time: 09:05
+2025-12-10 09:12:00,959 | app.agent | INFO     | Timezone: Asia/Kolkata
+2025-12-10 09:12:00,959 | app.agent | INFO     | Mode: PRODUCTION
+2025-12-10 09:12:00,959 | app.agent | INFO     | ======================================================================
+2025-12-10 09:12:00,959 | app.agent | INFO     | 🤖 Nifty AI Trading Agent Initialized (Phase 3: AI Analyst)
+2025-12-10 09:12:00,959 | app.agent | INFO     | ======================================================================
+2025-12-10 09:12:00,959 | app.agent | INFO     | 📂 Loaded 8 recent alerts from Firestore
+2025-12-10 09:12:00,959 | data_module.persistence | INFO     | 📂 Loaded 8 active alerts for today from Firestore
+2025-12-10 09:11:59,005 | data_module.fyers_interface | INFO     | ✅ Fyers Model initialized
+2025-12-10 09:11:58,656 | data_module.persistence | INFO     | 💾 Firestore initialized | Project: nifty-trading-agent
+2025-12-10 09:11:58,654 | ai_module.groq_analyzer | INFO     | 🧠 Groq AI Initialized | Model: llama-3.3-70b-versatile
+2025-12-10 09:11:58,653 | telegram_module.bot_handler | INFO     | 🤖 TelegramBot initialized | Chat ID: 1067969031 | Channel: -1003359785282
+2025-12-10 09:11:58,600 | data_module.fetcher | INFO     | 🚀 DataFetcher initialized | Primary: Fyers | Fallback: YFinance
+2025-12-10 09:11:58,600 | data_module.fyers_interface | INFO     | ✅ Fyers Model initialized
+2025-12-10 09:11:58,599 | app.bootstrap | INFO     | 🔧 Bootstrapping NiftyTradingAgent...
+2025-12-10 09:11:58,599 | __main__ | INFO     | 🚀 Agent starting...
+
+Container called exit(0).
+2025-12-10 09:06:22,742 | __main__ | INFO     |    AI Usage: 0 tokens used
+2025-12-10 09:06:22,742 | __main__ | INFO     |    Alerts Sent: 0
+2025-12-10 09:06:22,742 | __main__ | INFO     |    Signals: 0
+📈 STATISTICS
+2025-12-10 09:06:22,742 | __main__ | INFO     | 
+2025-12-10 09:06:22,742 | app.agent | INFO     | ======================================================================
+2025-12-10 09:06:22,742 | app.agent | INFO     | Errors: 0
+2025-12-10 09:06:22,742 | app.agent | INFO     | Alerts Sent: 0
+2025-12-10 09:06:22,742 | app.agent | INFO     | Total Signals Generated: 0
+2025-12-10 09:06:22,742 | app.agent | INFO     | Instruments Analyzed: 1
+2025-12-10 09:06:22,742 | app.agent | INFO     | Timestamp: 2025-12-10T09:06:18.827908
+2025-12-10 09:06:22,741 | app.agent | INFO     | ======================================================================
+2025-12-10 09:06:22,741 | app.agent | INFO     | 📊 ANALYSIS SUMMARY
+======================================================================
+2025-12-10 09:06:22,741 | app.agent | INFO     | 
+2025-12-10 09:06:22,438 | app.agent | INFO     | ✅ NIFTY analysis complete | 0 signals | 0 alerts sent
+2025-12-10 09:06:22,437 | analysis_module.technical | INFO     | ✅ Volatility OK | ATR: 0.0830% (> 0.06%)
+2025-12-10 09:06:22,435 | analysis_module.technical | INFO     | 🔬 TechnicalAnalyzer initialized for NIFTY
+2025-12-10 09:06:22,435 | app.agent | INFO     | 📊 Option Metrics: PCR=0.63, IV=None%, MaxPain=25850
+2025-12-10 09:06:22,433 | data_module.fyers_interface | INFO     | ✅ Fyers Option Chain fetched for NIFTY
+2025-12-10 09:06:22,130 | app.agent | INFO     | 🧬 Fetching Option Chain for NIFTY...
+2025-12-10 09:06:19,925 | analysis_module.technical | INFO     | 🎯 RETEST SETUP | Support retest at 25731.48 (former resistance, role reversal) | Price: 25762.90 | Level: 25731.48 | Dist: 0.122%
+2025-12-10 09:06:19,925 | analysis_module.technical | INFO     | ✅ S/R Calculated | Supports: 13 [25731.4755859375, 25773.4501953125, 25814.033203125]... | Resistances: 10 [25861.807942708332, 25915.1875, 25952.008138020832]...
+2025-12-10 09:06:19,922 | analysis_module.technical | INFO     | 📊 PDH/PDL | PDH: 25923.15 | PDL: 25728.05 | Gap% vs PDH(open): -0.23%
+2025-12-10 09:06:19,917 | analysis_module.technical | INFO     | 📊 PDH/PDL | PDH: 25923.15 | PDL: 25728.05 | Gap% vs PDH(open): -0.23%
+2025-12-10 09:06:19,904 | analysis_module.technical | INFO     | 📐 Higher TF context | Trend15m: DOWN | VWAP: 25762.90 (FLAT) | 20EMA: 25786.01 | PrevDay: FLAT
+2025-12-10 09:06:19,904 | analysis_module.technical | INFO     | 📊 Opening Range (15min) | High: 26186.90 | Low: 25811.55 | Range: 375.35
+2025-12-10 09:06:19,899 | analysis_module.technical | INFO     | 🔬 TechnicalAnalyzer initialized for NIFTY
+2025-12-10 09:06:19,893 | data_module.fetcher | INFO     | ✅ Historical data fetched: NIFTY | 5 candles
+2025-12-10 09:06:19,787 | data_module.fetcher | INFO     | ✅ Historical data fetched: NIFTY | 247 candles
+2025-12-10 09:06:19,629 | data_module.fetcher | INFO     | ✅ Historical data fetched: NIFTY | 364 candles
+2025-12-10 09:06:18,828 | app.agent | INFO     | ----------------------------------------------------------------------
+🔍 Analyzing: NIFTY
+2025-12-10 09:06:18,827 | app.agent | INFO     | 
+2025-12-10 09:06:17,874 | app.agent | INFO     | ======================================================================
+📊 ANALYSIS STARTED | Instruments: ['NIFTY']
+2025-12-10 09:06:17,874 | app.agent | INFO     | 
+2025-12-10 09:06:17,232 | __main__ | INFO     | ✅ All connections successful
+2025-12-10 09:06:17,230 | telegram_module.bot_handler | INFO     | ✅ Telegram connection successful | Bot: NiftyLevelsAI
+2025-12-10 09:06:16,863 | telegram_module.bot_handler | INFO     | 🧪 Testing Telegram connection...
+🔌 Testing external connections...
+2025-12-10 09:06:16,733 | __main__ | INFO     | 
+2025-12-10 09:06:16,733 | app.agent | INFO     | Analysis start time: 09:05
+2025-12-10 09:06:16,733 | app.agent | INFO     | Timezone: Asia/Kolkata
+2025-12-10 09:06:16,733 | app.agent | INFO     | Mode: PRODUCTION
+2025-12-10 09:06:16,733 | app.agent | INFO     | ======================================================================
+2025-12-10 09:06:16,733 | app.agent | INFO     | 🤖 Nifty AI Trading Agent Initialized (Phase 3: AI Analyst)
+2025-12-10 09:06:16,733 | app.agent | INFO     | ======================================================================
+2025-12-10 09:06:16,733 | app.agent | INFO     | 📂 Loaded 8 recent alerts from Firestore
+2025-12-10 09:06:16,732 | data_module.persistence | INFO     | 📂 Loaded 8 active alerts for today from Firestore
+2025-12-10 09:06:16,141 | data_module.fyers_interface | INFO     | ✅ Fyers Model initialized
+2025-12-10 09:06:16,007 | data_module.persistence | INFO     | 💾 Firestore initialized | Project: nifty-trading-agent
+2025-12-10 09:06:16,005 | ai_module.groq_analyzer | INFO     | 🧠 Groq AI Initialized | Model: llama-3.3-70b-versatile
+2025-12-10 09:06:16,005 | telegram_module.bot_handler | INFO     | 🤖 TelegramBot initialized | Chat ID: 1067969031 | Channel: -1003359785282
+2025-12-10 09:06:15,973 | data_module.fetcher | INFO     | 🚀 DataFetcher initialized | Primary: Fyers | Fallback: YFinance
+2025-12-10 09:06:15,973 | data_module.fyers_interface | INFO     | ✅ Fyers Model initialized
+2025-12-10 09:06:15,972 | app.bootstrap | INFO     | 🔧 Bootstrapping NiftyTradingAgent...
+2025-12-10 09:06:15,972 | __main__ | INFO     | 🚀 Agent starting...
+
+Container called exit(0).
+2025-12-10 09:01:30,430 | __main__ | INFO     |    AI Usage: 0 tokens used
+2025-12-10 09:01:30,430 | __main__ | INFO     |    Alerts Sent: 0
+2025-12-10 09:01:30,430 | __main__ | INFO     |    Signals: 0
+📈 STATISTICS
+2025-12-10 09:01:30,430 | __main__ | INFO     | 
+2025-12-10 09:01:30,430 | app.agent | INFO     | ======================================================================
+2025-12-10 09:01:30,430 | app.agent | INFO     | Errors: 0
+2025-12-10 09:01:30,430 | app.agent | INFO     | Alerts Sent: 0
+2025-12-10 09:01:30,430 | app.agent | INFO     | Total Signals Generated: 0
+2025-12-10 09:01:30,430 | app.agent | INFO     | Instruments Analyzed: 1
+2025-12-10 09:01:30,430 | app.agent | INFO     | Timestamp: 2025-12-10T09:01:26.487343
+2025-12-10 09:01:30,430 | app.agent | INFO     | ======================================================================
+2025-12-10 09:01:30,430 | app.agent | INFO     | 📊 ANALYSIS SUMMARY
+======================================================================
+2025-12-10 09:01:30,430 | app.agent | INFO     | 
+2025-12-10 09:01:30,134 | app.agent | INFO     | ✅ NIFTY analysis complete | 0 signals | 0 alerts sent
+2025-12-10 09:01:30,134 | analysis_module.technical | INFO     | ✅ Volatility OK | ATR: 0.0736% (> 0.06%)
+2025-12-10 09:01:30,132 | analysis_module.technical | INFO     | 🔬 TechnicalAnalyzer initialized for NIFTY
+2025-12-10 09:01:30,132 | app.agent | INFO     | 📊 Option Metrics: PCR=0.6404, IV=None%, MaxPain=25850
+2025-12-10 09:01:30,131 | data_module.fyers_interface | INFO     | ✅ Fyers Option Chain fetched for NIFTY
+2025-12-10 09:01:29,707 | app.agent | INFO     | 🧬 Fetching Option Chain for NIFTY...
+2025-12-10 09:01:27,570 | analysis_module.technical | INFO     | 🎯 RETEST SETUP | Support retest at 25731.48 (former resistance, role reversal) | Price: 25759.60 | Level: 25731.48 | Dist: 0.109%
+2025-12-10 09:01:27,570 | analysis_module.technical | INFO     | ✅ S/R Calculated | Supports: 13 [25731.4755859375, 25773.4501953125, 25814.033203125]... | Resistances: 10 [25861.807942708332, 25915.1875, 25952.008138020832]...
+2025-12-10 09:01:27,568 | analysis_module.technical | INFO     | 📊 PDH/PDL | PDH: 25923.15 | PDL: 25728.05 | Gap% vs PDH(open): -0.23%
+2025-12-10 09:01:27,564 | analysis_module.technical | INFO     | 📊 PDH/PDL | PDH: 25923.15 | PDL: 25728.05 | Gap% vs PDH(open): -0.23%
+2025-12-10 09:01:27,555 | analysis_module.technical | INFO     | 📐 Higher TF context | Trend15m: DOWN | VWAP: 25759.60 (FLAT) | 20EMA: 25785.85 | PrevDay: FLAT
+2025-12-10 09:01:27,555 | analysis_module.technical | INFO     | 📊 Opening Range (15min) | High: 26186.90 | Low: 25811.55 | Range: 375.35
+2025-12-10 09:01:27,551 | analysis_module.technical | INFO     | 🔬 TechnicalAnalyzer initialized for NIFTY
+2025-12-10 09:01:27,547 | data_module.fetcher | INFO     | ✅ Historical data fetched: NIFTY | 5 candles
+2025-12-10 09:01:27,379 | data_module.fetcher | INFO     | ✅ Historical data fetched: NIFTY | 247 candles
+2025-12-10 09:01:27,214 | data_module.fetcher | INFO     | ✅ Historical data fetched: NIFTY | 363 candles
+2025-12-10 09:01:26,487 | app.agent | INFO     | ----------------------------------------------------------------------
+🔍 Analyzing: NIFTY
+2025-12-10 09:01:26,487 | app.agent | INFO     | 
+2025-12-10 09:01:25,229 | app.agent | INFO     | ======================================================================
+📊 ANALYSIS STARTED | Instruments: ['NIFTY']
+2025-12-10 09:01:25,229 | app.agent | INFO     | 
+2025-12-10 09:01:24,927 | __main__ | INFO     | ✅ All connections successful
+2025-12-10 09:01:24,926 | telegram_module.bot_handler | INFO     | ✅ Telegram connection successful | Bot: NiftyLevelsAI
+2025-12-10 09:01:24,562 | telegram_module.bot_handler | INFO     | 🧪 Testing Telegram connection...
+🔌 Testing external connections...
+2025-12-10 09:01:24,435 | __main__ | INFO     | 
+2025-12-10 09:01:24,435 | app.agent | INFO     | Analysis start time: 09:05
+2025-12-10 09:01:24,435 | app.agent | INFO     | Timezone: Asia/Kolkata
+2025-12-10 09:01:24,435 | app.agent | INFO     | Mode: PRODUCTION
+2025-12-10 09:01:24,435 | app.agent | INFO     | ======================================================================
+2025-12-10 09:01:24,435 | app.agent | INFO     | 🤖 Nifty AI Trading Agent Initialized (Phase 3: AI Analyst)
+2025-12-10 09:01:24,435 | app.agent | INFO     | ======================================================================
+2025-12-10 09:01:24,435 | app.agent | INFO     | 📂 Loaded 8 recent alerts from Firestore
+2025-12-10 09:01:24,435 | data_module.persistence | INFO     | 📂 Loaded 8 active alerts for today from Firestore
+2025-12-10 09:01:22,647 | data_module.fyers_interface | INFO     | ✅ Fyers Model initialized
+2025-12-10 09:01:22,464 | data_module.persistence | INFO     | 💾 Firestore initialized | Project: nifty-trading-agent
+2025-12-10 09:01:22,462 | ai_module.groq_analyzer | INFO     | 🧠 Groq AI Initialized | Model: llama-3.3-70b-versatile
+2025-12-10 09:01:22,462 | telegram_module.bot_handler | INFO     | 🤖 TelegramBot initialized | Chat ID: 1067969031 | Channel: -1003359785282
+2025-12-10 09:01:22,417 | data_module.fetcher | INFO     | 🚀 DataFetcher initialized | Primary: Fyers | Fallback: YFinance
+2025-12-10 09:01:22,417 | data_module.fyers_interface | INFO     | ✅ Fyers Model initialized
+2025-12-10 09:01:22,417 | app.bootstrap | INFO     | 🔧 Bootstrapping NiftyTradingAgent...
+2025-12-10 09:01:22,416 | __main__ | INFO     | 🚀 Agent starting...
+
+Container called exit(0).
+2025-12-10 08:56:31,014 | __main__ | INFO     |    AI Usage: 0 tokens used
+2025-12-10 08:56:31,014 | __main__ | INFO     |    Alerts Sent: 0
+2025-12-10 08:56:31,014 | __main__ | INFO     |    Signals: 0
+📈 STATISTICS
+2025-12-10 08:56:31,013 | __main__ | INFO     | 
+2025-12-10 08:56:31,013 | app.agent | INFO     | ======================================================================
+2025-12-10 08:56:31,013 | app.agent | INFO     | Errors: 0
+2025-12-10 08:56:31,013 | app.agent | INFO     | Alerts Sent: 0
+2025-12-10 08:56:31,013 | app.agent | INFO     | Total Signals Generated: 0
+2025-12-10 08:56:31,013 | app.agent | INFO     | Instruments Analyzed: 1
+2025-12-10 08:56:31,013 | app.agent | INFO     | Timestamp: 2025-12-10T08:56:27.106968
+2025-12-10 08:56:31,013 | app.agent | INFO     | ======================================================================
+2025-12-10 08:56:31,013 | app.agent | INFO     | 📊 ANALYSIS SUMMARY
+======================================================================
+2025-12-10 08:56:31,013 | app.agent | INFO     | 
+2025-12-10 08:56:30,715 | app.agent | INFO     | ✅ NIFTY analysis complete | 0 signals | 0 alerts sent
+2025-12-10 08:56:30,714 | analysis_module.technical | INFO     | ✅ Volatility OK | ATR: 0.0691% (> 0.06%)
+2025-12-10 08:56:30,713 | analysis_module.technical | INFO     | 🔬 TechnicalAnalyzer initialized for NIFTY
+2025-12-10 08:56:30,713 | app.agent | INFO     | 📊 Option Metrics: PCR=0.6476, IV=None%, MaxPain=25850
+2025-12-10 08:56:30,712 | data_module.fyers_interface | INFO     | ✅ Fyers Option Chain fetched for NIFTY
+2025-12-10 08:56:30,395 | app.agent | INFO     | 🧬 Fetching Option Chain for NIFTY...
+2025-12-10 08:56:28,234 | analysis_module.technical | INFO     | ✅ Directional bias: SHORT
+2025-12-10 08:56:28,232 | analysis_module.technical | INFO     | 📊 INSIDE BAR PATTERN DETECTED | Validating setup...
+2025-12-10 08:56:28,232 | analysis_module.technical | INFO     | 🎯 RETEST SETUP | Support retest at 25728.05 (former resistance, role reversal) | Price: 25746.45 | Level: 25728.05 | Dist: 0.072%
+2025-12-10 08:56:28,231 | analysis_module.technical | INFO     | 📦 Consolidation detected | Range: 25740.70-25850.20 (0.43%) | 20/20 bars
+2025-12-10 08:56:28,228 | analysis_module.technical | INFO     | ✅ S/R Calculated | Supports: 13 [25728.05078125, 25773.4501953125, 25814.033203125]... | Resistances: 10 [25861.807942708332, 25915.1875, 25952.008138020832]...
+2025-12-10 08:56:28,226 | analysis_module.technical | INFO     | 📊 PDH/PDL | PDH: 25923.15 | PDL: 25728.05 | Gap% vs PDH(open): -0.23%
+2025-12-10 08:56:28,222 | analysis_module.technical | INFO     | 📊 PDH/PDL | PDH: 25923.15 | PDL: 25728.05 | Gap% vs PDH(open): -0.23%
+2025-12-10 08:56:28,215 | analysis_module.technical | INFO     | 📐 Higher TF context | Trend15m: DOWN | VWAP: 25746.45 (FLAT) | 20EMA: 25789.32 | PrevDay: FLAT
+2025-12-10 08:56:28,215 | analysis_module.technical | INFO     | 📊 Opening Range (15min) | High: 26186.90 | Low: 25811.55 | Range: 375.35
+2025-12-10 08:56:28,211 | analysis_module.technical | INFO     | 🔬 TechnicalAnalyzer initialized for NIFTY
+2025-12-10 08:56:28,206 | data_module.fetcher | INFO     | ✅ Historical data fetched: NIFTY | 5 candles
+2025-12-10 08:56:28,061 | data_module.fetcher | INFO     | ✅ Historical data fetched: NIFTY | 246 candles
+2025-12-10 08:56:27,964 | data_module.fetcher | INFO     | ✅ Historical data fetched: NIFTY | 362 candles
+2025-12-10 08:56:27,107 | app.agent | INFO     | ----------------------------------------------------------------------
+🔍 Analyzing: NIFTY
+2025-12-10 08:56:27,107 | app.agent | INFO     | 
+2025-12-10 08:56:25,847 | app.agent | INFO     | ======================================================================
+📊 ANALYSIS STARTED | Instruments: ['NIFTY']
+2025-12-10 08:56:25,847 | app.agent | INFO     | 
+2025-12-10 08:56:25,525 | __main__ | INFO     | ✅ All connections successful
+2025-12-10 08:56:25,524 | telegram_module.bot_handler | INFO     | ✅ Telegram connection successful | Bot: NiftyLevelsAI
+2025-12-10 08:56:25,153 | telegram_module.bot_handler | INFO     | 🧪 Testing Telegram connection...
+🔌 Testing external connections...
+2025-12-10 08:56:24,987 | __main__ | INFO     | 
+2025-12-10 08:56:24,987 | app.agent | INFO     | Analysis start time: 09:05
+2025-12-10 08:56:24,987 | app.agent | INFO     | Timezone: Asia/Kolkata
+2025-12-10 08:56:24,987 | app.agent | INFO     | Mode: PRODUCTION
+2025-12-10 08:56:24,987 | app.agent | INFO     | ======================================================================
+2025-12-10 08:56:24,987 | app.agent | INFO     | 🤖 Nifty AI Trading Agent Initialized (Phase 3: AI Analyst)
+2025-12-10 08:56:24,987 | app.agent | INFO     | ======================================================================
+2025-12-10 08:56:24,986 | app.agent | INFO     | 📂 Loaded 8 recent alerts from Firestore
+2025-12-10 08:56:24,986 | data_module.persistence | INFO     | 📂 Loaded 8 active alerts for today from Firestore
+2025-12-10 08:56:23,126 | data_module.fyers_interface | INFO     | ✅ Fyers Model initialized
+2025-12-10 08:56:22,938 | data_module.persistence | INFO     | 💾 Firestore initialized | Project: nifty-trading-agent
+2025-12-10 08:56:22,937 | ai_module.groq_analyzer | INFO     | 🧠 Groq AI Initialized | Model: llama-3.3-70b-versatile
+2025-12-10 08:56:22,937 | telegram_module.bot_handler | INFO     | 🤖 TelegramBot initialized | Chat ID: 1067969031 | Channel: -1003359785282
+2025-12-10 08:56:22,906 | data_module.fetcher | INFO     | 🚀 DataFetcher initialized | Primary: Fyers | Fallback: YFinance
+2025-12-10 08:56:22,906 | data_module.fyers_interface | INFO     | ✅ Fyers Model initialized
+2025-12-10 08:56:22,905 | app.bootstrap | INFO     | 🔧 Bootstrapping NiftyTradingAgent...
+2025-12-10 08:56:22,905 | __main__ | INFO     | 🚀 Agent starting...
+
+Container called exit(0).
+2025-12-10 08:51:49,521 | __main__ | INFO     |    AI Usage: 0 tokens used
+2025-12-10 08:51:49,521 | __main__ | INFO     |    Alerts Sent: 0
+2025-12-10 08:51:49,520 | __main__ | INFO     |    Signals: 0
+📈 STATISTICS
+2025-12-10 08:51:49,520 | __main__ | INFO     | 
+2025-12-10 08:51:49,520 | app.agent | INFO     | ======================================================================
+2025-12-10 08:51:49,520 | app.agent | INFO     | Errors: 0
+2025-12-10 08:51:49,520 | app.agent | INFO     | Alerts Sent: 0
+2025-12-10 08:51:49,520 | app.agent | INFO     | Total Signals Generated: 0
+2025-12-10 08:51:49,520 | app.agent | INFO     | Instruments Analyzed: 1
+2025-12-10 08:51:49,520 | app.agent | INFO     | Timestamp: 2025-12-10T08:51:45.647761
+2025-12-10 08:51:49,520 | app.agent | INFO     | ======================================================================
+2025-12-10 08:51:49,520 | app.agent | INFO     | 📊 ANALYSIS SUMMARY
+======================================================================
+2025-12-10 08:51:49,520 | app.agent | INFO     | 
+2025-12-10 08:51:49,213 | app.agent | INFO     | ✅ NIFTY analysis complete | 0 signals | 0 alerts sent
+2025-12-10 08:51:49,212 | analysis_module.technical | INFO     | ✅ Volatility OK | ATR: 0.0730% (> 0.06%)
+2025-12-10 08:51:49,209 | analysis_module.technical | INFO     | 🔬 TechnicalAnalyzer initialized for NIFTY
+2025-12-10 08:51:49,209 | app.agent | INFO     | 📊 Option Metrics: PCR=0.6623, IV=None%, MaxPain=25850
+2025-12-10 08:51:49,208 | data_module.fyers_interface | INFO     | ✅ Fyers Option Chain fetched for NIFTY
+2025-12-10 08:51:48,893 | app.agent | INFO     | 🧬 Fetching Option Chain for NIFTY...
+2025-12-10 08:51:46,703 | analysis_module.technical | INFO     | 🎯 RETEST SETUP | Support retest at 25728.05 (former resistance, role reversal) | Price: 25743.00 | Level: 25728.05 | Dist: 0.058%
+2025-12-10 08:51:46,703 | analysis_module.technical | INFO     | 📦 Consolidation detected | Range: 25743.00-25850.20 (0.42%) | 20/20 bars
+2025-12-10 08:51:46,700 | analysis_module.technical | INFO     | ✅ S/R Calculated | Supports: 13 [25728.05078125, 25773.4501953125, 25814.033203125]... | Resistances: 10 [25861.807942708332, 25915.1875, 25952.008138020832]...
+2025-12-10 08:51:46,697 | analysis_module.technical | INFO     | 📊 PDH/PDL | PDH: 25923.15 | PDL: 25728.05 | Gap% vs PDH(open): -0.23%
+2025-12-10 08:51:46,692 | analysis_module.technical | INFO     | 📊 PDH/PDL | PDH: 25923.15 | PDL: 25728.05 | Gap% vs PDH(open): -0.23%
+2025-12-10 08:51:46,681 | analysis_module.technical | INFO     | 📐 Higher TF context | Trend15m: DOWN | VWAP: 25743.00 (FLAT) | 20EMA: 25793.27 | PrevDay: FLAT
+2025-12-10 08:51:46,681 | analysis_module.technical | INFO     | 📊 Opening Range (15min) | High: 26186.90 | Low: 25811.55 | Range: 375.35
+2025-12-10 08:51:46,677 | analysis_module.technical | INFO     | 🔬 TechnicalAnalyzer initialized for NIFTY
+2025-12-10 08:51:46,671 | data_module.fetcher | INFO     | ✅ Historical data fetched: NIFTY | 5 candles
+2025-12-10 08:51:46,582 | data_module.fetcher | INFO     | ✅ Historical data fetched: NIFTY | 246 candles
+2025-12-10 08:51:46,427 | data_module.fetcher | INFO     | ✅ Historical data fetched: NIFTY | 361 candles
+2025-12-10 08:51:45,648 | app.agent | INFO     | ----------------------------------------------------------------------
+🔍 Analyzing: NIFTY
+2025-12-10 08:51:45,647 | app.agent | INFO     | 
+2025-12-10 08:51:44,372 | app.agent | INFO     | ======================================================================
+📊 ANALYSIS STARTED | Instruments: ['NIFTY']
+2025-12-10 08:51:44,372 | app.agent | INFO     | 
+2025-12-10 08:51:44,052 | __main__ | INFO     | ✅ All connections successful
+2025-12-10 08:51:44,050 | telegram_module.bot_handler | INFO     | ✅ Telegram connection successful | Bot: NiftyLevelsAI
+2025-12-10 08:51:43,684 | telegram_module.bot_handler | INFO     | 🧪 Testing Telegram connection...
+🔌 Testing external connections...
+2025-12-10 08:51:43,574 | __main__ | INFO     | 
+2025-12-10 08:51:43,574 | app.agent | INFO     | Analysis start time: 09:05
+2025-12-10 08:51:43,574 | app.agent | INFO     | Timezone: Asia/Kolkata
+2025-12-10 08:51:43,573 | app.agent | INFO     | Mode: PRODUCTION
+2025-12-10 08:51:43,573 | app.agent | INFO     | ======================================================================
+2025-12-10 08:51:43,573 | app.agent | INFO     | 🤖 Nifty AI Trading Agent Initialized (Phase 3: AI Analyst)
+2025-12-10 08:51:43,573 | app.agent | INFO     | ======================================================================
+2025-12-10 08:51:43,573 | app.agent | INFO     | 📂 Loaded 8 recent alerts from Firestore
+2025-12-10 08:51:43,573 | data_module.persistence | INFO     | 📂 Loaded 8 active alerts for today from Firestore
+2025-12-10 08:51:41,709 | data_module.fyers_interface | INFO     | ✅ Fyers Model initialized
+2025-12-10 08:51:41,296 | data_module.persistence | INFO     | 💾 Firestore initialized | Project: nifty-trading-agent
+2025-12-10 08:51:41,294 | ai_module.groq_analyzer | INFO     | 🧠 Groq AI Initialized | Model: llama-3.3-70b-versatile
+2025-12-10 08:51:41,294 | telegram_module.bot_handler | INFO     | 🤖 TelegramBot initialized | Chat ID: 1067969031 | Channel: -1003359785282
+2025-12-10 08:51:41,259 | data_module.fetcher | INFO     | 🚀 DataFetcher initialized | Primary: Fyers | Fallback: YFinance
+2025-12-10 08:51:41,259 | data_module.fyers_interface | INFO     | ✅ Fyers Model initialized
+2025-12-10 08:51:41,258 | app.bootstrap | INFO     | 🔧 Bootstrapping NiftyTradingAgent...
+2025-12-10 08:51:41,258 | __main__ | INFO     | 🚀 Agent starting...
+
+Container called exit(0).
+2025-12-10 08:46:40,182 | __main__ | INFO     |    AI Usage: 0 tokens used
+2025-12-10 08:46:40,182 | __main__ | INFO     |    Alerts Sent: 0
+2025-12-10 08:46:40,182 | __main__ | INFO     |    Signals: 0
+📈 STATISTICS
+2025-12-10 08:46:40,182 | __main__ | INFO     | 
+2025-12-10 08:46:40,182 | app.agent | INFO     | ======================================================================
+2025-12-10 08:46:40,182 | app.agent | INFO     | Errors: 0
+2025-12-10 08:46:40,182 | app.agent | INFO     | Alerts Sent: 0
+2025-12-10 08:46:40,182 | app.agent | INFO     | Total Signals Generated: 1
+2025-12-10 08:46:40,182 | app.agent | INFO     | Instruments Analyzed: 1
+2025-12-10 08:46:40,182 | app.agent | INFO     | Timestamp: 2025-12-10T08:46:34.374754
+2025-12-10 08:46:40,182 | app.agent | INFO     | ======================================================================
+2025-12-10 08:46:40,182 | app.agent | INFO     | 📊 ANALYSIS SUMMARY
+======================================================================
+2025-12-10 08:46:40,182 | app.agent | INFO     | 
+2025-12-10 08:46:38,937 | app.agent | INFO     | ✅ NIFTY analysis complete | 1 signals | 0 alerts sent
+2025-12-10 08:46:38,937 | app.agent | INFO     | ⏭️ Duplicate Alert 10.4m ago | NIFTY|BEARISH_BREAKOUT|515469|2025-12-10
+2025-12-10 08:46:38,644 | ai_module.groq_analyzer | INFO     | 🤖 AI Analysis Complete (0.59s) | Confidence: 92%
+2025-12-10 08:46:38,052 | analysis_module.signal_pipeline | INFO     | ✅ Resolving to SHORT (Option Bias)
+2025-12-10 08:46:38,052 | analysis_module.signal_pipeline | INFO     | ⚔️ Conflict Detected: 1 LONG vs 1 SHORT
+2025-12-10 08:46:38,050 | analysis_module.technical | INFO     | ✅ Volatility OK | ATR: 0.0707% (> 0.06%)
+2025-12-10 08:46:38,047 | analysis_module.technical | INFO     | 🔬 TechnicalAnalyzer initialized for NIFTY
+2025-12-10 08:46:38,047 | app.agent | INFO     | 📊 Option Metrics: PCR=0.6757, IV=None%, MaxPain=25850
+2025-12-10 08:46:38,046 | data_module.fyers_interface | INFO     | ✅ Fyers Option Chain fetched for NIFTY
+2025-12-10 08:46:37,688 | app.agent | INFO     | 🧬 Fetching Option Chain for NIFTY...
+2025-12-10 08:46:35,558 | analysis_module.technical | INFO     | ✅ Directional bias: SHORT
+2025-12-10 08:46:35,555 | analysis_module.technical | INFO     | 📊 INSIDE BAR PATTERN DETECTED | Validating setup...
+2025-12-10 08:46:35,554 | analysis_module.technical | INFO     | 🎯 RETEST SETUP | Support retest at 25739.30 (former resistance, role reversal) | Price: 25761.85 | Level: 25739.30 | Dist: 0.088%
+2025-12-10 08:46:35,554 | analysis_module.technical | INFO     | 📉 Bearish (S/R) breakdown candidate | Price: 25761.85 < Lvl: 25773.45 | Consolidation: True | Surge: True
+2025-12-10 08:46:35,554 | analysis_module.technical | INFO     | 📦 Consolidation detected | Range: 25750.55-25850.20 (0.39%) | 20/20 bars
+2025-12-10 08:46:35,549 | analysis_module.technical | INFO     | ✅ S/R Calculated | Supports: 13 [25739.30078125, 25773.4501953125, 25814.033203125]... | Resistances: 10 [25861.807942708332, 25915.1875, 25952.008138020832]...
+2025-12-10 08:46:35,546 | analysis_module.technical | INFO     | 📊 PDH/PDL | PDH: 25923.15 | PDL: 25728.05 | Gap% vs PDH(open): -0.23%
+2025-12-10 08:46:35,542 | analysis_module.technical | INFO     | 📊 PDH/PDL | PDH: 25923.15 | PDL: 25728.05 | Gap% vs PDH(open): -0.23%
+2025-12-10 08:46:35,532 | analysis_module.technical | INFO     | 📐 Higher TF context | Trend15m: DOWN | VWAP: 25761.85 (FLAT) | 20EMA: 25799.21 | PrevDay: FLAT
+2025-12-10 08:46:35,532 | analysis_module.technical | INFO     | 📊 Opening Range (15min) | High: 26186.90 | Low: 25811.55 | Range: 375.35
+2025-12-10 08:46:35,527 | analysis_module.technical | INFO     | 🔬 TechnicalAnalyzer initialized for NIFTY
+2025-12-10 08:46:35,522 | data_module.fetcher | INFO     | ✅ Historical data fetched: NIFTY | 5 candles
+2025-12-10 08:46:35,380 | data_module.fetcher | INFO     | ✅ Historical data fetched: NIFTY | 246 candles
+2025-12-10 08:46:35,226 | data_module.fetcher | INFO     | ✅ Historical data fetched: NIFTY | 360 candles
+2025-12-10 08:46:34,374 | app.agent | INFO     | ----------------------------------------------------------------------
+🔍 Analyzing: NIFTY
+2025-12-10 08:46:34,374 | app.agent | INFO     | 
+2025-12-10 08:46:33,447 | app.agent | INFO     | ======================================================================
+📊 ANALYSIS STARTED | Instruments: ['NIFTY']
+2025-12-10 08:46:33,447 | app.agent | INFO     | 
+2025-12-10 08:46:32,825 | __main__ | INFO     | ✅ All connections successful
+2025-12-10 08:46:32,824 | telegram_module.bot_handler | INFO     | ✅ Telegram connection successful | Bot: NiftyLevelsAI
+2025-12-10 08:46:32,455 | telegram_module.bot_handler | INFO     | 🧪 Testing Telegram connection...
+🔌 Testing external connections...
+2025-12-10 08:46:32,327 | __main__ | INFO     | 
+2025-12-10 08:46:32,327 | app.agent | INFO     | Analysis start time: 09:05
+2025-12-10 08:46:32,327 | app.agent | INFO     | Timezone: Asia/Kolkata
+2025-12-10 08:46:32,327 | app.agent | INFO     | Mode: PRODUCTION
+2025-12-10 08:46:32,327 | app.agent | INFO     | ======================================================================
+2025-12-10 08:46:32,327 | app.agent | INFO     | 🤖 Nifty AI Trading Agent Initialized (Phase 3: AI Analyst)
+2025-12-10 08:46:32,327 | app.agent | INFO     | ======================================================================
+2025-12-10 08:46:32,327 | app.agent | INFO     | 📂 Loaded 8 recent alerts from Firestore
+2025-12-10 08:46:32,326 | data_module.persistence | INFO     | 📂 Loaded 8 active alerts for today from Firestore
+2025-12-10 08:46:31,787 | data_module.fyers_interface | INFO     | ✅ Fyers Model initialized
+2025-12-10 08:46:31,618 | data_module.persistence | INFO     | 💾 Firestore initialized | Project: nifty-trading-agent
+2025-12-10 08:46:31,615 | ai_module.groq_analyzer | INFO     | 🧠 Groq AI Initialized | Model: llama-3.3-70b-versatile
+2025-12-10 08:46:31,615 | telegram_module.bot_handler | INFO     | 🤖 TelegramBot initialized | Chat ID: 1067969031 | Channel: -1003359785282
+2025-12-10 08:46:31,586 | data_module.fetcher | INFO     | 🚀 DataFetcher initialized | Primary: Fyers | Fallback: YFinance
+2025-12-10 08:46:31,586 | data_module.fyers_interface | INFO     | ✅ Fyers Model initialized
+2025-12-10 08:46:31,585 | app.bootstrap | INFO     | 🔧 Bootstrapping NiftyTradingAgent...
+2025-12-10 08:46:31,585 | __main__ | INFO     | 🚀 Agent starting...
+
+Container called exit(0).
+2025-12-10 08:41:44,057 | __main__ | INFO     |    AI Usage: 0 tokens used
+2025-12-10 08:41:44,057 | __main__ | INFO     |    Alerts Sent: 0
+2025-12-10 08:41:44,057 | __main__ | INFO     |    Signals: 0
+📈 STATISTICS
+2025-12-10 08:41:44,057 | __main__ | INFO     | 
+2025-12-10 08:41:44,057 | app.agent | INFO     | ======================================================================
+2025-12-10 08:41:44,057 | app.agent | INFO     | Errors: 0
+2025-12-10 08:41:44,057 | app.agent | INFO     | Alerts Sent: 0
+2025-12-10 08:41:44,056 | app.agent | INFO     | Total Signals Generated: 2
+2025-12-10 08:41:44,056 | app.agent | INFO     | Instruments Analyzed: 1
+2025-12-10 08:41:44,056 | app.agent | INFO     | Timestamp: 2025-12-10T08:41:37.227365
+2025-12-10 08:41:44,056 | app.agent | INFO     | ======================================================================
+2025-12-10 08:41:44,056 | app.agent | INFO     | 📊 ANALYSIS SUMMARY
+======================================================================
+2025-12-10 08:41:44,056 | app.agent | INFO     | 
+2025-12-10 08:41:43,714 | app.agent | INFO     | ✅ NIFTY analysis complete | 2 signals | 0 alerts sent
+2025-12-10 08:41:43,714 | app.agent | INFO     | ⏭️ Suppressing RETEST alert: Recent similar retest 20.4m ago
+2025-12-10 08:41:42,449 | app.agent | INFO     | ⏭️ Duplicate Alert 5.4m ago | NIFTY|BEARISH_BREAKOUT|515469|2025-12-10
+2025-12-10 08:41:42,148 | ai_module.groq_analyzer | INFO     | 🤖 AI Analysis Complete (0.44s) | Confidence: 68%
+2025-12-10 08:41:41,712 | ai_module.groq_analyzer | INFO     | 🤖 AI Analysis Complete (0.79s) | Confidence: 92%
+2025-12-10 08:41:40,927 | analysis_module.signal_pipeline | INFO     | ✅ Resolving to SHORT (Option Bias)
+2025-12-10 08:41:40,927 | analysis_module.signal_pipeline | INFO     | ⚔️ Conflict Detected: 1 LONG vs 2 SHORT
+2025-12-10 08:41:40,926 | analysis_module.technical | INFO     | ✅ Volatility OK | ATR: 0.0716% (> 0.06%)
+2025-12-10 08:41:40,924 | analysis_module.technical | INFO     | 🔬 TechnicalAnalyzer initialized for NIFTY
+2025-12-10 08:41:40,924 | app.agent | INFO     | 📊 Option Metrics: PCR=0.6851, IV=None%, MaxPain=25850
+2025-12-10 08:41:40,923 | data_module.fyers_interface | INFO     | ✅ Fyers Option Chain fetched for NIFTY
+2025-12-10 08:41:40,552 | app.agent | INFO     | 🧬 Fetching Option Chain for NIFTY...
+2025-12-10 08:41:38,379 | analysis_module.technical | INFO     | 🟢 BULLISH ENGULFING detected | Prev: 25765.20->25762.15 | Curr: 25762.05->25771.50 | Vol: 1.0x
+2025-12-10 08:41:38,379 | analysis_module.technical | INFO     | 🎯 RETEST SETUP | Resistance retest at 25773.45 | Price: 25771.50 | Level: 25773.45 | Dist: 0.008%
+2025-12-10 08:41:38,379 | analysis_module.technical | INFO     | ⏭️ Skipping retest - poor R:R (1.45) < 1.5
+2025-12-10 08:41:38,378 | analysis_module.technical | INFO     | 🎯 RETEST SETUP | Support retest at 25728.05 (former resistance, role reversal) | Price: 25771.50 | Level: 25728.05 | Dist: 0.169%
+2025-12-10 08:41:38,378 | analysis_module.technical | INFO     | 📉 Bearish (S/R) breakdown candidate | Price: 25771.50 < Lvl: 25773.45 | Consolidation: True | Surge: True
+2025-12-10 08:41:38,378 | analysis_module.technical | INFO     | 📦 Consolidation detected | Range: 25750.55-25850.20 (0.39%) | 20/20 bars
+2025-12-10 08:41:38,374 | analysis_module.technical | INFO     | ✅ S/R Calculated | Supports: 13 [25728.05078125, 25773.4501953125, 25814.033203125]... | Resistances: 10 [25861.807942708332, 25915.1875, 25952.008138020832]...
+2025-12-10 08:41:38,372 | analysis_module.technical | INFO     | 📊 PDH/PDL | PDH: 25923.15 | PDL: 25728.05 | Gap% vs PDH(open): -0.23%
+2025-12-10 08:41:38,367 | analysis_module.technical | INFO     | 📊 PDH/PDL | PDH: 25923.15 | PDL: 25728.05 | Gap% vs PDH(open): -0.23%
+2025-12-10 08:41:38,355 | analysis_module.technical | INFO     | 📐 Higher TF context | Trend15m: DOWN | VWAP: 25771.50 (FLAT) | 20EMA: 25804.39 | PrevDay: FLAT
+2025-12-10 08:41:38,355 | analysis_module.technical | INFO     | 📊 Opening Range (15min) | High: 26186.90 | Low: 25811.55 | Range: 375.35
+2025-12-10 08:41:38,351 | analysis_module.technical | INFO     | 🔬 TechnicalAnalyzer initialized for NIFTY
+2025-12-10 08:41:38,343 | data_module.fetcher | INFO     | ✅ Historical data fetched: NIFTY | 5 candles
+2025-12-10 08:41:38,194 | data_module.fetcher | INFO     | ✅ Historical data fetched: NIFTY | 245 candles
+2025-12-10 08:41:38,053 | data_module.fetcher | INFO     | ✅ Historical data fetched: NIFTY | 359 candles
+2025-12-10 08:41:37,227 | app.agent | INFO     | ----------------------------------------------------------------------
+🔍 Analyzing: NIFTY
+2025-12-10 08:41:37,227 | app.agent | INFO     | 
+2025-12-10 08:41:35,950 | app.agent | INFO     | ======================================================================
+📊 ANALYSIS STARTED | Instruments: ['NIFTY']
+2025-12-10 08:41:35,950 | app.agent | INFO     | 
+2025-12-10 08:41:35,652 | __main__ | INFO     | ✅ All connections successful
+2025-12-10 08:41:35,651 | telegram_module.bot_handler | INFO     | ✅ Telegram connection successful | Bot: NiftyLevelsAI
+2025-12-10 08:41:35,249 | telegram_module.bot_handler | INFO     | 🧪 Testing Telegram connection...
+🔌 Testing external connections...
+2025-12-10 08:41:35,127 | __main__ | INFO     | 
+2025-12-10 08:41:35,127 | app.agent | INFO     | Analysis start time: 09:05
+2025-12-10 08:41:35,127 | app.agent | INFO     | Timezone: Asia/Kolkata
+2025-12-10 08:41:35,127 | app.agent | INFO     | Mode: PRODUCTION
+2025-12-10 08:41:35,127 | app.agent | INFO     | ======================================================================
+2025-12-10 08:41:35,127 | app.agent | INFO     | 🤖 Nifty AI Trading Agent Initialized (Phase 3: AI Analyst)

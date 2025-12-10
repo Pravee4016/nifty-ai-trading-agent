@@ -12,6 +12,7 @@ from datetime import datetime
 from config.settings import (
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHAT_ID,
+    TELEGRAM_CHANNEL_ID,
     TELEGRAM_MAX_MESSAGE_LENGTH,
     INCLUDE_CHARTS_IN_ALERT,
     INCLUDE_AI_SUMMARY_IN_ALERT,
@@ -29,10 +30,11 @@ class TelegramBot:
     def __init__(self):
         self.token = TELEGRAM_BOT_TOKEN
         self.chat_id = TELEGRAM_CHAT_ID
+        self.channel_id = TELEGRAM_CHANNEL_ID
         self.base_url = f"https://api.telegram.org/bot{self.token}"
         self.message_count = 0
 
-        logger.info(f"🤖 TelegramBot initialized | Chat ID: {self.chat_id}")
+        logger.info(f"🤖 TelegramBot initialized | Chat ID: {self.chat_id} | Channel: {self.channel_id}")
         self._validate_credentials()
 
     def _validate_credentials(self):
@@ -59,42 +61,107 @@ class TelegramBot:
             )
             text = text[: TELEGRAM_MAX_MESSAGE_LENGTH - 3] + "..."
 
-        try:
-            url = f"{self.base_url}/sendMessage"
-            payload = {
-                "chat_id": self.chat_id,
-                "text": text,
-                "parse_mode": parse_mode,
-                "disable_web_page_preview": True,
-            }
+        import time
 
-            logger.debug(
-                f"📤 Sending Telegram message | Length: {len(text)} chars"
-            )
-            response = requests.post(url, json=payload, timeout=10)
-            response.raise_for_status()
+        url = f"{self.base_url}/sendMessage"
+        
+        # List of targets
+        targets = [self.chat_id]
+        if self.channel_id:
+            targets.append(self.channel_id)
+        
+        success_count = 0
+        
+        for target_id in targets:
+            retries = 3
+            backoff = 2
+            
+            while retries > 0:
+                try:
+                    payload = {
+                        "chat_id": target_id,
+                        "text": text,
+                        "parse_mode": parse_mode,
+                        "disable_web_page_preview": True,
+                    }
 
-            data = response.json()
-            if data.get("ok"):
-                msg_id = data["result"]["message_id"]
-                self.message_count += 1
-                logger.info(f"✅ Telegram message sent | ID: {msg_id}")
-                if DEBUG_MODE:
-                    logger.debug(f"   Preview: {text[:150]}...")
-                return True
+                    response = requests.post(url, json=payload, timeout=10)
+                    
+                    # Handle Rate Limiting (429) explicitly
+                    if response.status_code == 429:
+                        retry_after = int(response.json().get("parameters", {}).get("retry_after", backoff))
+                        logger.warning(f"⏳ Rate limited by Telegram. Retrying after {retry_after}s...")
+                        time.sleep(retry_after)
+                        retries -= 1
+                        continue
+                        
+                    response.raise_for_status()
 
-            logger.error(
-                f"❌ Telegram API error: {data.get('description', 'Unknown')}"
-            )
-            return False
+                    data = response.json()
+                    if data.get("ok"):
+                        msg_id = data["result"]["message_id"]
+                        success_count += 1
+                        logger.info(f"✅ Telegram message sent to {target_id} | ID: {msg_id}")
+                        break # Success, move to next target
+                    else:
+                        logger.error(f"❌ Failed to send to {target_id}: {data.get('description', 'Unknown')}")
+                        break # Logic error, don't retry
 
-        except requests.exceptions.RequestException as e:
-            logger.error(f"❌ Telegram send failed: {str(e)}")
-            return False
+                except requests.exceptions.RequestException as e:
+                    logger.error(f"❌ Telegram send failed (Attempt {4-retries}/3): {str(e)}")
+                    retries -= 1
+                    time.sleep(backoff)
+                    backoff *= 2  # Exponential backoff for network errors
+        
+        if success_count > 0:
+            self.message_count += 1
+            return True
+        return False
 
     # =====================================================================
     # SIGNAL ALERTS
     # =====================================================================
+
+    def _format_targets(self, signal: Dict) -> str:
+        """Format T1, T2, T3 targets."""
+        tp1 = float(signal.get("take_profit", 0.0))
+        tp2 = float(signal.get("take_profit_2", 0.0))
+        tp3 = float(signal.get("take_profit_3", 0.0))
+        
+        # Base T1
+        txt = f"🎯 Target 1: {tp1:.2f} (Safe)"
+        
+        # If strong trend, show T2/T3
+        if tp2 > 0 and abs(tp2 - tp1) > 1.0:
+             txt += f"\n🎯 Target 2: {tp2:.2f}"
+        if tp3 > 0 and abs(tp3 - tp2) > 1.0:
+             txt += f"\n🎯 Target 3: {tp3:.2f}"
+             
+        return txt
+
+    def _format_ai_analysis(self, signal: Dict) -> str:
+        """Helper to format AI analysis section."""
+        if not INCLUDE_AI_SUMMARY_IN_ALERT:
+            return ""
+            
+        ai_data = signal.get("ai_analysis")
+        if not ai_data:
+            return ""
+
+        verdict = ai_data.get("verdict", "N/A")
+        reasoning = ai_data.get("reasoning", "No details")
+        ai_conf = ai_data.get("confidence", 0)
+        
+        # Check for legacy schema fallback
+        if "recommendation" in ai_data:
+            verdict = ai_data.get("recommendation")
+            reasoning = ai_data.get("summary")
+
+        return (
+            f"🤖 <b>AI Analyst Review</b>\n"
+            f"• Verdict: {verdict} ({ai_conf}%)\n"
+            f"• Logic: <i>{reasoning}</i>\n"
+        )
 
     def send_breakout_alert(self, signal: Dict) -> bool:
         """Send formatted breakout/breakdown alert."""
@@ -120,27 +187,26 @@ class TelegramBot:
                 f"📊 {instrument}\n"
                 f"💰 Entry: {entry:.2f}\n"
                 f"🛑 SL: {sl:.2f}\n"
-                f"🎯 TP: {tp:.2f}\n"
+                f"{self._format_targets(signal)}\n"
                 f"📈 RR: {rr:.2f}:1\n"
-                f"⚡ Confidence: {conf:.1f}%\n\n"
+                f"⚡ Confidence: {conf:.1f}%\n"
+                f"🏆 Score: {signal.get('score', 'N/A')}/100\n\n"
                 f"{signal.get('description', '')}\n\n"
             )
+            
+            # Add Score Reasons
+            reasons = signal.get("score_reasons", [])
+            if reasons:
+                message += f"📝 Factors: {', '.join(reasons)}\n\n"
             
             # Add IST timestamp
             import pytz
             ist = pytz.timezone("Asia/Kolkata")
             now_ist = datetime.now(ist)
-            message += f"⏰ {now_ist.strftime('%Y-%m-%d %H:%M:%S IST')}"
+            message += f"⏰ {now_ist.strftime('%Y-%m-%d %H:%M:%S IST')}\n\n"
 
-            if signal.get("ai_analysis") and INCLUDE_AI_SUMMARY_IN_ALERT:
-                ai_data = signal["ai_analysis"]
-                summary = ai_data.get("summary", "")
-                reco = ai_data.get("recommendation", "HOLD")
-                ai_conf = ai_data.get("confidence", 0)
-                message += (
-                    f"\n\n🤖 AI: {reco} ({ai_conf:.0f}%)\n"
-                    f"{summary[:300]}"
-                )
+            # Add AI Analysis
+            message += self._format_ai_analysis(signal)
 
             return self.send_message(message)
 
@@ -206,12 +272,22 @@ class TelegramBot:
                 f"📍 Key Level: {level:.2f}\n\n"
                 f"<b>💰 Entry:</b> {entry:.2f}\n"
                 f"<b>🛑 Stop Loss:</b> {sl:.2f}\n"
-                f"<b>🎯 Target:</b> {tp:.2f}\n"
+                f"<b>{self._format_targets(signal)}</b>\n"
                 f"<b>📈 Risk:Reward:</b> 1:{rr:.1f}\n"
-                f"<b>⚡ Confidence:</b> {conf:.0f}%\n\n"
+                f"<b>⚡ Confidence:</b> {conf:.0f}%\n"
+                f"<b>🏆 Score:</b> {signal.get('score', 'N/A')}/100\n\n"
                 f"💡 {desc}\n\n"
-                f"⏰ {now_ist.strftime('%Y-%m-%d %H:%M:%S IST')}"
             )
+            
+            # Add Score Reasons
+            reasons = signal.get("score_reasons", [])
+            if reasons:
+                message += f"📝 Factors: {', '.join(reasons)}\n\n"
+            
+            message += f"⏰ {now_ist.strftime('%Y-%m-%d %H:%M:%S IST')}\n\n"
+            
+            # Add AI Analysis
+            message += self._format_ai_analysis(signal)
 
             return self.send_message(message)
 
@@ -245,12 +321,22 @@ class TelegramBot:
                 f"📊 <b>{instrument}</b>\n\n"
                 f"<b>💰 Entry:</b> {entry:.2f}\n"
                 f"<b>🛑 Stop Loss:</b> {sl:.2f}\n"
-                f"<b>🎯 Target:</b> {tp:.2f}\n"
+                f"<b>{self._format_targets(signal)}</b>\n"
                 f"<b>📈 Risk:Reward:</b> 1:{rr:.1f}\n"
-                f"<b>⚡ Confidence:</b> {conf:.0f}%\n\n"
+                f"<b>⚡ Confidence:</b> {conf:.0f}%\n"
+                f"<b>🏆 Score:</b> {signal.get('score', 'N/A')}/100\n\n"
                 f"💡 {desc}\n\n"
-                f"⏰ {now_ist.strftime('%Y-%m-%d %H:%M:%S IST')}"
             )
+
+            # Add Score Reasons
+            reasons = signal.get("score_reasons", [])
+            if reasons:
+                message += f"📝 Factors: {', '.join(reasons)}\n\n"
+                
+            message += f"⏰ {now_ist.strftime('%Y-%m-%d %H:%M:%S IST')}\n\n"
+            
+            # Add AI Analysis
+            message += self._format_ai_analysis(signal)
 
             return self.send_message(message)
 
@@ -288,7 +374,14 @@ class TelegramBot:
                 # Trend
                 st_trend = data.get("short_term_trend", "NEUTRAL")
                 lt_trend = data.get("long_term_trend", "NEUTRAL")
-                message += f"Trend: {st_trend} (ST) / {lt_trend} (LT)\n\n"
+                message += f"Trend: {st_trend} (ST) / {lt_trend} (LT)\n"
+                
+                # Option Chain Summary
+                if "option_chain" in data:
+                    oc = data["option_chain"]
+                    message += f"Option Chain: PCR {oc.get('pcr', 'N/A')} | MP {oc.get('max_pain', 'N/A')} | {oc.get('sentiment', 'NEUTRAL')}\n"
+                
+                message += "\n"
             
             # Events summary
             stats = summary_data.get("statistics", {})
@@ -403,7 +496,7 @@ class TelegramBot:
             )
             return False
 
-    def send_market_context(self, context_data: Dict, pdh_pdl_stats: Optional[Dict] = None, sr_levels: Optional[Dict] = None) -> bool:
+    def send_market_context(self, context_data: Dict, pdh_pdl_stats: Optional[Dict] = None, sr_levels: Optional[Dict] = None, option_stats: Optional[Dict] = None) -> bool:
         """Send market context (Opening Range + S/R) update with optional PDH/PDL."""
         try:
             message = "🌅 <b>MARKET CONTEXT UPDATE</b>\n\n"
@@ -413,6 +506,8 @@ class TelegramBot:
                 all_instruments.update(pdh_pdl_stats.keys())
             if sr_levels:
                 all_instruments.update(sr_levels.keys())
+            if option_stats:
+                all_instruments.update(option_stats.keys())
             
             for instrument in sorted(list(all_instruments)):
                 message += f"<b>{instrument}</b>\n"
@@ -439,14 +534,33 @@ class TelegramBot:
                 # NEW: Support/Resistance Levels
                 if sr_levels and instrument in sr_levels:
                     sr = sr_levels[instrument]
+                    
+                    # Handle both dictionary (tests) and TechnicalLevels object (prod)
+                    if isinstance(sr, dict):
+                        s_levels = sr.get('support', []) or sr.get('support_levels', [])
+                        r_levels = sr.get('resistance', []) or sr.get('resistance_levels', [])
+                    else:
+                        # Assume TechnicalLevels dataclass
+                        s_levels = getattr(sr, 'support_levels', [])
+                        r_levels = getattr(sr, 'resistance_levels', [])
+
                     # Show top 3 supports and resistances
-                    supports = sorted(sr.get('support', []))[-3:] if sr.get('support') else []
-                    resistances = sorted(sr.get('resistance', []))[:3] if sr.get('resistance') else []
+                    supports = sorted(s_levels)[-3:] if s_levels else []
+                    resistances = sorted(r_levels)[:3] if r_levels else []
                     
                     if supports:
                         message += f"📊 Supports: {', '.join([f'{s:.2f}' for s in supports])}\n"
                     if resistances:
                         message += f"📊 Resistances: {', '.join([f'{r:.2f}' for r in resistances])}\n"
+
+                # NEW: Option Chain Stats
+                if option_stats and instrument in option_stats:
+                    oc = option_stats[instrument]
+                    message += f"🎲 PCR: {oc.get('pcr', 'N/A')} | Max Pain: {oc.get('max_pain', 'N/A')}\n"
+                    
+                    ks = oc.get('key_strikes', {})
+                    if ks:
+                         message += f"🔑 Res: {ks.get('max_call_oi_strike', 'N/A')} | Sup: {ks.get('max_put_oi_strike', 'N/A')}\n"
                 
                 message += "\n"
 
@@ -475,25 +589,43 @@ class TelegramBot:
 
         try:
             url = f"{self.base_url}/sendPhoto"
+            
+            targets = [self.chat_id]
+            if self.channel_id:
+                targets.append(self.channel_id)
+            
+            success_count = 0
+
             with open(chart_path, "rb") as photo:
-                files = {"photo": photo}
-                data = {
-                    "chat_id": self.chat_id,
-                    "caption": caption[:1024],
-                }
+                file_content = photo.read()
+                
+            for target_id in targets:
+                # Re-open file or use content for each request? 
+                # requests files param expects an open file handle. 
+                # Better to send bytes.
+                
+                try:
+                    files = {"photo": file_content}
+                    data = {
+                        "chat_id": target_id,
+                        "caption": caption[:1024],
+                    }
 
-                logger.debug(f"📤 Sending chart: {chart_path}")
-                response = requests.post(
-                    url, files=files, data=data, timeout=30
-                )
-                response.raise_for_status()
+                    logger.debug(f"📤 Sending chart to {target_id}: {chart_path}")
+                    response = requests.post(
+                        url, files=files, data=data, timeout=30
+                    )
+                    response.raise_for_status()
 
-                if response.json().get("ok"):
-                    logger.info("✅ Chart sent to Telegram")
-                    return True
+                    if response.json().get("ok"):
+                        success_count += 1
+                        logger.info(f"✅ Chart sent to {target_id}")
+                    else:
+                        logger.error(f"❌ Failed to send chart to {target_id}")
+                except Exception as inner_e:
+                    logger.error(f"❌ Error sending chart to {target_id}: {inner_e}")
 
-                logger.error("❌ Failed to send chart")
-                return False
+            return success_count > 0
 
         except Exception as e:
             logger.error(f"❌ Chart sending failed: {str(e)}")
@@ -550,3 +682,11 @@ if __name__ == "__main__":
     bot = get_bot()
     bot.test_connection()
     bot.send_startup_message()
+
+
+# Alias for backward compatibility / explicit naming
+TelegramBotHandler = TelegramBot
+
+def format_signal_message(signal: Dict) -> str:
+    """Legacy/Helper formatter (optional)."""
+    return f"{signal.get('signal_type', 'SIGNAL')} @ {signal.get('price_level', 0)}"

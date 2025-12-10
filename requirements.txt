@@ -23,3 +23,4 @@ python-telegram-bot==20.3
 # Timezone helpers
 tzdata==2023.3
 google-cloud-firestore
+fyers-apiv3>=3.0.0

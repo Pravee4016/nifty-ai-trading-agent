@@ -1,402 +1,245 @@
 """
-AI Analysis Module using Groq API
-Generates intelligent trade signal analysis and summaries.
+Groq AI Analyzer Module
+Uses LLaMA 3 70B via Groq API to provide "Hedge Fund Analyst" reasoning for technical signals.
 """
 
-import requests
+import os
 import json
 import logging
-import time
-from typing import Dict, Optional
+import requests
+from typing import Dict, Optional, Tuple, List
 from datetime import datetime
-import hashlib
+from requests.adapters import HTTPAdapter
+from requests.packages.urllib3.util.retry import Retry
 
 from config.settings import (
-    GROQ_API_KEY,
-    GROQ_MODEL,
-    GROQ_MAX_TOKENS,
-    GROQ_TEMPERATURE,
-    GROQ_REQUESTS_PER_DAY,
-    DEBUG_MODE,
-    DRY_RUN,
+    GROQ_API_KEY, 
+    GROQ_MODEL, 
+    GROQ_TEMPERATURE, 
+    GROQ_MAX_TOKENS
 )
 
 logger = logging.getLogger(__name__)
 
-
 class GroqAnalyzer:
-    """Interface with Groq API for AI-powered analysis."""
-
     def __init__(self):
         self.api_key = GROQ_API_KEY
+        self.api_url = "https://api.groq.com/openai/v1/chat/completions"
         self.model = GROQ_MODEL
-        self.base_url = "https://api.groq.com/openai/v1/chat/completions"
-        self.request_count = 0
-        self.tokens_used = 0
-        self.cache: Dict[str, Dict] = {}
+        
+        if not self.api_key or "YOUR_KEY" in self.api_key:
+            logger.warning("⚠️ Groq API Key not found. AI Analysis disabled.")
+            self.enabled = False
+        else:
+            self.enabled = True
+            logger.info(f"🧠 Groq AI Initialized | Model: {self.model}")
 
-        logger.info(f"🤖 GroqAnalyzer initialized | Model: {self.model}")
-        self._validate_api_key()
+        # Setup resilient session
+        self.session = requests.Session()
+        retries = Retry(total=3, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504])
+        self.session.mount('https://', HTTPAdapter(max_retries=retries))
 
-    def _validate_api_key(self):
-        if not self.api_key or self.api_key == "YOUR_GROQ_KEY_HERE":
-            logger.error("❌ GROQ_API_KEY not configured!")
-            raise ValueError("GROQ_API_KEY required")
-
-    # =====================================================================
-    # SIGNAL ANALYSIS
-    # =====================================================================
-
-    def analyze_signal(self, signal_data:Dict) -> Dict:
-        """
-        Analyze a trading signal using AI.
-
-        signal_data should contain:
-            instrument, signal_type, price_level, entry, sl, tp, technical_data.
-        """
-        try:
-            cache_key = self._generate_cache_key(signal_data)
-            if cache_key in self.cache:
-                logger.debug("💾 GroqAnalyzer cache HIT")
-                return self.cache[cache_key]
-
-            prompt = self._build_analysis_prompt(signal_data)
-
-            logger.debug(
-                f"📤 Sending analysis request to Groq | "
-                f"{signal_data.get('instrument')} | {signal_data.get('signal_type')}"
-            )
-
-            response_text = self._call_groq_api(prompt)
-            if not response_text:
-                return self._fallback_analysis(signal_data)
-
-            analysis = self._parse_analysis_response(
-                response_text, signal_data
-            )
-
-            self.cache[cache_key] = analysis
-            logger.info(
-                "✅ Signal analyzed | "
-                f"Conf: {analysis['confidence']}% | "
-                f"Reco: {analysis['recommendation']}"
-            )
-            return analysis
-
-        except Exception as e:
-            logger.error(f"❌ Signal analysis failed: {str(e)}")
-            return self._fallback_analysis(signal_data)
-
-    def generate_market_summary(self, market_data: Dict) -> str:
-        """
-        Generate AI market summary (2-3 sentences).
-        """
-        try:
-            prompt = (
-                "Provide a concise 2-3 sentence market summary for "
-                "the following \n\n"
-                f"{json.dumps(market_data, indent=2)}"
-            )
-
-            logger.debug("📊 Generating market summary via Groq")
-            response_text = self._call_groq_api(prompt)
-            if not response_text:
-                return "Market analysis unavailable."
-
-            summary = response_text.strip()[:600]
-            logger.info(
-                f"✅ Market summary generated | Length: {len(summary)} chars"
-            )
-            return summary
-
-        except Exception as e:
-            logger.error(f"❌ Summary generation failed: {str(e)}")
-            return "Market analysis temporarily unavailable."
-
-    def forecast_market_outlook(self, market_context: str) -> Dict:
-        """
-        Generate AI forecast for next trading day based on today's market action.
-        """
-        try:
-            prompt = (
-                "Based on today's market action, provide a forecast for the next trading day.\\n\\n"
-                f"Today's Summary: {market_context}\\n\\n"
-                "Respond in JSON format:\\n"
-                "{\\n"
-                '  \\"outlook\\": \\"BULLISH/BEARISH/NEUTRAL\\",\\n'
-                '  \\"confidence\\": 0-100,\\n'
-                ' \\"summary\\": \\"2-3 sentence forecast\\",\\n'
-                '  \\"key_levels\\": [\\"level1\\", \\"level2\\"]\\n'
-                "}"
-            )
-            
-            logger.debug("🔮 Generating market forecast via Groq")
-            response_text = self._call_groq_api(prompt)
-            
-            if not response_text:
-                return {
-                    "outlook": "NEUTRAL",
-                    "confidence": 50,
-                    "summary": "Forecast unavailable",
-                    "key_levels": []
-                }
-            
-            # Try to parse JSON
-            response_text = response_text.strip()
-            if response_text.startswith("{"):
-                forecast = json.loads(response_text)
-            else:
-                # Fallback parsing
-                lower = response_text.lower()
-                outlook = "NEUTRAL"
-                if "bullish" in lower:
-                    outlook = "BULLISH"
-                elif "bearish" in lower:
-                    outlook = "BEARISH"
-                
-                forecast = {
-                    "outlook": outlook,
-                    "confidence": 65,
-                    "summary": response_text[:400],
-                    "key_levels": []
-                }
-            
-            logger.info(f"✅ Forecast generated | Outlook: {forecast.get('outlook', 'NEUTRAL')}")
-            return forecast
-            
-        except Exception as e:
-            logger.error(f"❌ Forecast generation failed: {str(e)}")
-            return {
-                "outlook": "NEUTRAL",
-                "confidence": 50,
-                "summary": "Forecast temporarily unavailable.",
-                "key_levels": []
-            }
-
-    # =====================================================================
-    # GROQ API CALL
-    # =====================================================================
-
-    def _call_groq_api(
-        self, prompt: str, retries: int = 3
-    ) -> Optional[str]:
-        """
-        Call Groq API with retry logic and simple rate tracking.
-        """
-        if DRY_RUN:
-            logger.warning("🚫 DRY RUN: Groq API not called")
-            return "Dry run response."
-
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-
-        payload = {
-            "model": self.model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "You are an expert intraday trader. "
-                        "Respond in concise JSON only."
-                    ),
-                },
-                {"role": "user", "content": prompt},
-            ],
-            "temperature": GROQ_TEMPERATURE,
-            "max_tokens": GROQ_MAX_TOKENS,
-            "top_p": 1,
-        }
-
-        for attempt in range(retries):
-            try:
-                start = time.time()
-                response = requests.post(
-                    self.base_url,
-                    headers=headers,
-                    json=payload,
-                    timeout=30,
-                )
-                elapsed = time.time() - start
-
-                if response.status_code == 200:
-                    data = response.json()
-                    usage = data.get("usage", {})
-                    total_tokens = usage.get("total_tokens", 0)
-                    self.tokens_used += total_tokens
-                    self.request_count += 1
-
-                    logger.debug(
-                        f"   Groq API OK | Time: {elapsed:.2f}s | "
-                        f"Tokens: {total_tokens}"
-                    )
-                    content = data["choices"][0]["message"]["content"]
-                    return content
-
-                if response.status_code == 429:
-                    logger.warning(
-                        f"⚠️  Groq rate limited, attempt {attempt + 1}"
-                    )
-                    time.sleep(2 ** attempt)
-                    continue
-
-                logger.warning(
-                    f"⚠️  Groq API error {response.status_code}: "
-                    f"{response.text[:200]}"
-                )
-                if attempt < retries - 1:
-                    time.sleep(2 ** attempt)
-
-            except requests.exceptions.Timeout:
-                logger.warning(
-                    f"⚠️  Groq timeout, attempt {attempt + 1}/{retries}"
-                )
-                if attempt < retries - 1:
-                    time.sleep(2)
-
-            except Exception as e:
-                logger.error(f"❌ Groq request failed: {str(e)}")
-                if attempt < retries - 1:
-                    time.sleep(2)
-
-        logger.error("❌ Groq API call failed after retries")
-        return None
-
-    # =====================================================================
-    # PROMPT & RESPONSE HANDLING
-    # =====================================================================
-
-    def _build_analysis_prompt(self, signal_data: Dict) -> str:
-        """Build compact JSON-focused prompt."""
-        return (
-            "Analyze this intraday trading signal and respond with a JSON:\n\n"
-            f"{json.dumps(signal_data, indent=2)}\n\n"
-            "Response JSON format:\n"
-            "{\n"
-            '  \"recommendation\": \"BUY/SELL/HOLD\",\n'
-            '  \"confidence\": 0-100,\n'
-            '  \"summary\": \"short explanation\",\n'
-            '  \"risks\": [\"risk1\", \"risk2\"]\n'
-            "}\n"
-        )
-
-    def _parse_analysis_response(
-        self, response_text: str, signal_data: Dict
+    def analyze_signal(
+        self, 
+        signal_data: Dict, 
+        market_context: Dict, 
+        technical_data: Dict
     ) -> Dict:
-        """Parse Groq text into structured dict."""
+        """
+        Analyze a trading signal using LLaMA 3.
+        
+        Returns:
+            Dict containing:
+            - reasoning (str): Natural language explanation
+            - confidence (int): 0-100 score
+            - risks (List[str]): Potential risks
+            - verdict (str): "STRONG BUY", "CAUTIOUS BUY", "PASS"
+        """
+        if not self.enabled:
+            return {"error": "AI Disabled"}
+
         try:
-            # Try to parse JSON directly
-            response_text = response_text.strip()
-            if response_text.startswith("{"):
-                data = json.loads(response_text)
-            else:
-                # Fallback: basic text parsing
-                lower = response_text.lower()
-                reco = "HOLD"
-                if "buy" in lower:
-                    reco = "BUY"
-                elif "sell" in lower:
-                    reco = "SELL"
-
-                data = {
-                    "recommendation": reco,
-                    "confidence": 65,
-                    "summary": response_text[:400],
-                    "risks": [],
-                }
-
-            return {
-                "signal_type": signal_data.get("signal_type"),
-                "recommendation": data.get("recommendation", "HOLD"),
-                "confidence": float(data.get("confidence", 65)),
-                "summary": data.get("summary", "")[:600],
-                "risks": data.get("risks", []),
-                "entry_point": signal_data.get("entry"),
-                "stop_loss": signal_data.get("sl"),
-                "take_profit": signal_data.get("tp"),
-                "timestamp": datetime.now().isoformat(),
+            prompt = self._construct_prompt(signal_data, market_context, technical_data)
+            
+            payload = {
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": self._get_system_prompt()},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": GROQ_TEMPERATURE,
+                "max_tokens": GROQ_MAX_TOKENS,
+                "response_format": {"type": "json_object"}
             }
+            
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"
+            }
+            
+            start_time = datetime.now()
+            response = self.session.post(
+                self.api_url, 
+                json=payload, 
+                headers=headers, 
+                timeout=10
+            ) 
+            response.raise_for_status()
+            
+            latency = (datetime.now() - start_time).total_seconds()
+            result = response.json()
+            
+            ai_content = result['choices'][0]['message']['content']
+            parsed_result = json.loads(ai_content)
+            
+            logger.info(f"🤖 AI Analysis Complete ({latency:.2f}s) | Confidence: {parsed_result.get('confidence')}%")
+            
+            return parsed_result
 
         except Exception as e:
-            logger.warning(
-                f"⚠️  Could not parse Groq response as JSON: {str(e)}"
-            )
-            return self._fallback_analysis(signal_data)
-
-    def _generate_cache_key(self, signal_data: Dict) -> str:
-        """Generate hash for signal_data to cache AI result."""
-        key_str = json.dumps(signal_data, sort_keys=True, default=str)
-        return hashlib.md5(key_str.encode("utf-8")).hexdigest()
-
-    def _fallback_analysis(self, signal_data: Dict) -> Dict:
-        """Fallback if Groq is unavailable."""
-        return {
-            "signal_type": signal_data.get("signal_type"),
-            "recommendation": "HOLD",
-            "confidence": 50.0,
-            "summary": "AI analysis unavailable, use technicals only.",
-            "risks": ["AI service unavailable"],
-            "entry_point": signal_data.get("entry"),
-            "stop_loss": signal_data.get("sl"),
-            "take_profit": signal_data.get("tp"),
-            "timestamp": datetime.now().isoformat(),
-        }
-
-    # =====================================================================
-    # USAGE STATS & TEST
-    # =====================================================================
-
-    def get_usage_stats(self) -> Dict:
-        """Return simple usage stats."""
-        return {
-            "requests_made": self.request_count,
-            "tokens_used": self.tokens_used,
-            "tokens_remaining": GROQ_REQUESTS_PER_DAY - self.tokens_used,
-        }
-
-    def print_usage_stats(self):
-        stats = self.get_usage_stats()
-        logger.info(
-            "📊 Groq Usage | "
-            f"Requests: {stats['requests_made']} | "
-            f"Tokens: {stats['tokens_used']} / {GROQ_REQUESTS_PER_DAY}"
-        )
-
-    def clear_cache(self):
-        self.cache.clear()
-        logger.info("🗑️  GroqAnalyzer cache cleared")
+            logger.error(f"❌ Groq Analysis Failed: {str(e)}")
+            return None
 
     def test_connection(self) -> bool:
-        """Simple connection test to Groq."""
+        """Test if Groq API is reachable and key is valid."""
+        if not self.enabled:
+            return False
+            
         try:
-            logger.info("🧪 Testing Groq API connection...")
-            resp = self._call_groq_api('Say "OK" if you are working.')
-            if resp and "OK" in resp:
-                logger.info("✅ Groq API connection successful")
-                return True
-            logger.warning(f"⚠️  Groq test unexpected response: {resp}")
-            return False
+            # Lightweight test call (list models)
+            headers = {"Authorization": f"Bearer {self.api_key}"}
+            response = self.session.get("https://api.groq.com/openai/v1/models", headers=headers, timeout=5)
+            return response.status_code == 200
         except Exception as e:
-            logger.error(f"❌ Groq connection test failed: {str(e)}")
+            logger.warning(f"⚠️ Groq Connection Test Failed: {e}")
             return False
 
+    def get_usage_stats(self) -> Dict:
+        """Return usage statistics for the AI module."""
+        return {
+            "enabled": self.enabled,
+            "model": self.model,
+            "requests_today": 0, # TODO: Implement real tracking if needed
+            "tokens_used": 0
+        }
 
-_analyzer: Optional[GroqAnalyzer] = None
+    def _get_system_prompt(self) -> str:
+        return """You are a Senior Hedge Fund Technical Analyst. 
+Your job is to VALIDATE algorithmic trading signals for NIFTY 50.
+You are skeptical, risk-averse, and focus on CONFLUENCE.
+
+OUTPUT FORMAT (JSON):
+{
+    "verdict": "STRONG_BUY" | "CAUTIOUS_BUY" | "STRONG_SELL" | "CAUTIOUS_SELL" | "PASS",
+    "confidence": <0-100 integer>,
+    "reasoning": "<Concise 2-sentence explanation focusing on WHY this works or fails>",
+    "risks": ["<Risk 1>", "<Risk 2>"]
+}
+
+SCORING RULES:
+- High Confidence (>80): Needs Trend Alignment + Structure Breakout + Good R:R.
+- Medium Confidence (60-80): Good structure but mixed trend or low volume.
+- Fail (<50): Counter-trend without reversal structure, or poor metrics.
+- DIRECTION: Ensure verdict matches signal direction (SELL for Bearish, BUY for Bullish)."""
+
+    def forecast_market_outlook(self, daily_summary_text: str) -> Dict:
+        """
+        Generate a market outlook forecast based on the day's summary.
+        
+        Args:
+            daily_summary_text (str): A text summary of the day's price action and signals.
+            
+        Returns:
+            Dict: {
+                "outlook": "BULLISH" | "BEARISH" | "NEUTRAL",
+                "confidence": int,
+                "summary": str
+            }
+        """
+        if not self.enabled:
+            return {"outlook": "NEUTRAL", "confidence": 0, "summary": "AI Disabled"}
+
+        try:
+            system_prompt = """You are a Market Strategist. 
+Analyze the provided end-of-day market summary and forecast the outlook for TOMORROW.
+Consider trend, support/resistance tests, and overall sentiment.
+OUTPUT JSON: {"outlook": "BULLISH"|"BEARISH"|"NEUTRAL", "confidence": 0-100, "summary": "One sentence outlook."}"""
+
+            user_prompt = f"MARKET SUMMARY:\n{daily_summary_text}\n\nFORECAST THE NEXT SESSION:"
+
+            payload = {
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                "temperature": 0.7,
+                "max_tokens": 150,
+                "response_format": {"type": "json_object"}
+            }
+
+            headers = {"Authorization": f"Bearer {self.api_key}"}
+            
+            response = self.session.post(
+                self.api_url, 
+                json=payload, 
+                headers=headers, 
+                timeout=10
+            ) 
+            response.raise_for_status()
+            
+            result = response.json()
+            content = result['choices'][0]['message']['content']
+            return json.loads(content)
+
+        except Exception as e:
+            logger.error(f"❌ Forecast failed: {e}")
+            return {"outlook": "NEUTRAL", "confidence": 0, "summary": "Forecast Error"}
 
 
-def get_analyzer() -> GroqAnalyzer:
-    global _analyzer
-    if _analyzer is None:
-        _analyzer = GroqAnalyzer()
-    return _analyzer
+    def _construct_prompt(self, sig: Dict, context: Dict, tech: Dict) -> str:
+        """Construct the dynamic prompt with signal details."""
+        
+        # safely access keys
+        signal_type = sig.get('signal_type', 'UNKNOWN')
+        price = sig.get('price_level', 0)
+        trend_15m = context.get('trend_direction', 'FLAT')
+        
+        mtf_data = (
+            f"15m Trend: {trend_15m}\n"
+            f"Rel to VWAP: {'Above' if context.get('price_above_vwap') else 'Below'}\n"
+            f"Rel to EMA20: {'Above' if context.get('price_above_ema20') else 'Below'}"
+        )
+        
+        option_data = "N/A"
+        # If we have option metrics passed in "tech" or "context"
+        # Adapted based on usage in main.py
+        
+        return f"""
+ANALYZE THIS TRADE SETUP:
 
+INSTRUMENT: NIFTY 50
+SIGNAL: {signal_type}
+LEVEL: {price}
+CURRENT PRICE: {sig.get('entry_price')}
 
-if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.DEBUG if DEBUG_MODE else logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
-    analyzer = get_analyzer()
-    analyzer.test_connection()
-    analyzer.print_usage_stats()
+TECHNICAL CONTEXT:
+{mtf_data}
+
+SIGNAL METRICS:
+- Confidence: {sig.get('confidence')}%
+- R:R Ratio: {sig.get('risk_reward_ratio', 0):.2f}
+- Volume Surge: {sig.get('volume_confirmed')}
+- Description: {sig.get('description')}
+
+Evaluate based on Multi-Timeframe alignment and Market Structure.
+"""
+
+# Singleton access
+_analyzer_instance = None
+
+def get_analyzer():
+    global _analyzer_instance
+    if _analyzer_instance is None:
+        _analyzer_instance = GroqAnalyzer()
+    return _analyzer_instance

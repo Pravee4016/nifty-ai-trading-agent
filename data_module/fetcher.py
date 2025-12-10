@@ -17,8 +17,11 @@ import time
 from config.settings import (
     CACHE_DIR,
     INSTRUMENTS,
+    INSTRUMENTS,
     DEBUG_MODE,
+    FYERS_CLIENT_ID,
 )
+from data_module.fyers_interface import FyersApp
 
 logger = logging.getLogger(__name__)
 
@@ -27,8 +30,7 @@ class DataFetcher:
     """Fetch real-time market data with caching & error handling"""
 
     def __init__(self):
-        # Simple placeholder base URL – you can swap this for a more robust NSE API
-        self.base_url = "https://nse-api-khaki.vercel.app:5000"
+
         self.session = requests.Session()
         self.session.headers.update(
             {
@@ -42,90 +44,121 @@ class DataFetcher:
         self.cache: Dict[str, Dict] = {}
         self.cache_time: Dict[str, float] = {}
 
-        logger.info(f"🚀 DataFetcher initialized | Base URL: {self.base_url}")
+        # Initialize Fyers App
+        self.fyers_app = FyersApp(app_id=FYERS_CLIENT_ID)
+        
+        logger.info(f"🚀 DataFetcher initialized | Primary: Fyers | Fallback: YFinance")
 
     # =====================================================================
     # REAL-TIME DATA FETCHING
     # =====================================================================
 
-    def fetch_nse_data(
-        self, instrument: str, retries: int = 3
-    ) -> Optional[Dict]:
+    def fetch_realtime_data(self, instrument: str) -> Optional[Dict]:
         """
-        Fetch real-time NSE data for an instrument.
-
-        Args:
-            instrument: 'NIFTY', 'BANKNIFTY', or 'FINNIFTY'
-            retries: Number of retry attempts
-
+        Fetch real-time market data from Fyers (Primary) or YFinance (Fallback).
+        
         Returns:
-            Dict with OHLCV data or None if failed
+            Dict: {
+                'price': float,
+                'dayHigh': float,
+                'dayLow': float,
+                'volume': float,
+                'timestamp': str,
+                'symbol': str
+            }
         """
         if instrument not in INSTRUMENTS:
             logger.error(f"❌ Unknown instrument: {instrument}")
             return None
 
-        symbol = INSTRUMENTS[instrument]["symbol"]
-
-        cache_key = f"nse_{instrument}"
+        cache_key = f"rt_{instrument}"
         if self._is_cache_valid(cache_key, ttl=10):
-            logger.debug(f"📦 Cache HIT: {instrument}")
             return self.cache[cache_key]
 
-        logger.debug(f"📡 Fetching NSE data for: {instrument} ({symbol})")
+        # 1. Try Fyers API
+        data = self._fetch_fyers_data(instrument)
+        if data:
+            self.cache[cache_key] = data
+            self.cache_time[cache_key] = time.time()
+            return data
 
-        for attempt in range(retries):
-            try:
-                url = f"{self.base_url}/stock?symbol={symbol}"
-                logger.debug(
-                    f"   Attempt {attempt + 1}/{retries} | URL: {url}"
-                )
-
-                response = self.session.get(url, timeout=10)
-                response.raise_for_status()
-
-                data = response.json()
-
-                if self._validate_nse_response(data):
-                    logger.info(
-                        f"✅ NSE data fetched: {instrument} | "
-                        f"Price: {data.get('price', 'N/A')}"
-                    )
-                    self.cache[cache_key] = data
-                    self.cache_time[cache_key] = time.time()
-
-                    if DEBUG_MODE:
-                        logger.debug(
-                            "   Response sample: "
-                            f"{json.dumps(data, indent=2)[:200]}..."
-                        )
-
-                    return data
-                else:
-                    logger.warning(
-                        f"⚠️  Invalid NSE response for {instrument}"
-                    )
-
-            except requests.exceptions.RequestException as e:
-                logger.warning(
-                    f"⚠️  Attempt {attempt + 1} failed: {str(e)}"
-                )
-                if attempt < retries - 1:
-                    time.sleep(2 ** attempt)
-            except Exception as e:
-                logger.error(f"❌ Unexpected error: {str(e)}")
-
-        logger.error(
-            f"❌ Failed to fetch NSE data for {instrument} after {retries} attempts"
-        )
-
-        if cache_key in self.cache:
-            logger.warning(
-                f"⚠️  Falling back to cached data for {instrument}"
-            )
-            return self.cache[cache_key]
-
+        # 2. Fallback to YFinance
+        logger.warning(f"⚠️ Fyers failed, falling back to yfinance for {instrument}")
+        data = self._fetch_yfinance_snapshot(instrument)
+        if data:
+            # Longer cache for yfinance as it's slower/delayed
+            self.cache[cache_key] = data
+            self.cache_time[cache_key] = time.time() 
+            return data
+            
+        logger.error(f"❌ All data sources failed for {instrument}")
         return None
+
+    def _fetch_fyers_data(self, instrument: str) -> Optional[Dict]:
+        """Fetch from Fyers."""
+        try:
+            quote = self.fyers_app.get_quote(instrument)
+            if not quote:
+                return None
+            
+            # Debug Fyers structure
+            if DEBUG_MODE:
+                logger.info(f"DEBUG: Fyers Quote: {quote}")
+
+            # Handle Fyers v3 structure: data might be in 'v' key
+            # Check if 'lp' is directly in quote or in quote['v']
+            data_source = quote.get('v', quote) if isinstance(quote.get('v'), dict) else quote
+            
+            # Map fields (Fyers v3 keys: lp, high_price, low_price, open_price, volume)
+            # OR keys: lp, h, l, o, v (older/ws api?)
+            # Let's handle both
+            
+            price = data_source.get('lp') or data_source.get('last_price') or 0
+            high = data_source.get('high_price') or data_source.get('h') or 0
+            low = data_source.get('low_price') or data_source.get('l') or 0
+            open_p = data_source.get('open_price') or data_source.get('o') or 0
+            volume = data_source.get('volume') or data_source.get('v') or 0
+
+            return {
+                "symbol": instrument,
+                "price": float(price),
+                "lastPrice": float(price),
+                "dayHigh": float(high),
+                "dayLow": float(low),
+                "open": float(open_p),
+                "volume": float(volume),
+                "timestamp": datetime.now().isoformat(),
+                "source": "FYERS"
+            }
+        except Exception as e:
+            logger.error(f"❌ Fyers fetch error: {e}")
+            return None
+
+    def _fetch_yfinance_snapshot(self, instrument: str) -> Optional[Dict]:
+        """Get snapshot from yfinance."""
+        try:
+            # Fetch 1 day of data with 5m interval to get latest candle
+            df = self.fetch_historical_data(instrument, period="1d", interval="5m")
+            if df is None or df.empty:
+                return None
+            
+            # Preprocess to ensure standard lowercase columns
+            df = self.preprocess_ohlcv(df)
+                
+            latest = df.iloc[-1]
+            return {
+                "symbol": instrument,
+                "price": float(latest['close']),
+                "dayHigh": float(df['high'].max()), 
+                "dayLow": float(df['low'].min()),
+                "open": float(df.iloc[0]['open']),
+                "volume": float(df['volume'].sum()), 
+                "timestamp": latest.name.isoformat(),
+                "source": "YFINANCE"
+            }
+        except Exception as e:
+            logger.error(f"❌ YFinance snapshot error: {e}")
+            return None
 
     # =====================================================================
     # HISTORICAL DATA FETCHING (YFINANCE)
@@ -172,6 +205,7 @@ class DataFetcher:
                 interval=interval,
                 progress=False,
                 prepost=False,
+                auto_adjust=True,  # Fix FutureWarning & ensure consistent Close
             )
 
             if isinstance(df, pd.Series):
@@ -276,37 +310,8 @@ class DataFetcher:
     # DATA VALIDATION
     # =====================================================================
 
-    def _validate_nse_response(self,  Dict) -> bool:
-        """Validate NSE API response data quality."""
-        required_fields = [
-            "symbol",
-            "price",
-            "dayHigh",
-            "dayLow",
-            "volume",
-            "timestamp",
-        ]
-
-        for field in required_fields:
-            if field not in data:
-                logger.warning(f"   ❌ Missing field: {field}")
-                return False
-
-        try:
-            price = float(data.get("price"))
-            volume = float(data.get("volume"))
-
-            if price <= 0 or volume < 0:
-                logger.warning(
-                    f"   ❌ Invalid values | Price: {price} | Volume: {volume}"
-                )
-                return False
-
-        except (ValueError, TypeError) as e:
-            logger.warning(f"   ❌ Type conversion failed: {str(e)}")
-            return False
-
-        logger.debug("   ✅ Data validation passed")
+    def _validate_nse_response(self, data: Dict) -> bool:
+        """Deprecated validation."""
         return True
 
     # =====================================================================
@@ -369,10 +374,24 @@ class DataFetcher:
                 df = df.drop(columns=["Adj Close"])
             elif "Adj Close" in df.columns:
                 # If only 'Adj Close' exists, rename it to 'Close'
+                # If only 'Adj Close' exists, rename it to 'Close'
                 df = df.rename(columns={"Adj Close": "Close"})
+            
+            # Ensure DatetimeIndex (Robustness Fix)
+            # If index is just numbers but we have a 'Date' or 'Datetime' column, use it.
+            if not isinstance(df.index, pd.DatetimeIndex):
+                for time_col in ["Date", "date", "Datetime", "datetime", "timestamp"]:
+                    if time_col in df.columns:
+                        df[time_col] = pd.to_datetime(df[time_col])
+                        df.set_index(time_col, inplace=True)
+                        logger.debug(f"   ✅ Set DatetimeIndex from column: {time_col}")
+                        break
             
             # Lowercase all column names
             df.columns = [str(c).lower() for c in df.columns]
+            
+            if DEBUG_MODE:
+                logger.debug(f"   Columns after processing: {list(df.columns)}")
 
             if not {"open", "high", "low", "close"}.issubset(df.columns):
                 logger.warning(f"⚠️  preprocess_ohlcv: missing OHLC columns. Have: {list(df.columns)}")
@@ -452,7 +471,7 @@ def test_data_fetcher():
     for instrument in ["NIFTY", "BANKNIFTY"]:
         logger.info(f"\n📌 Testing {instrument}...")
 
-        data = fetcher.fetch_nse_data(instrument)
+        data = fetcher.fetch_realtime_data(instrument)
         if data is not None:
             logger.info(f"   ✅ Real-time: {data.get('price')}")
 

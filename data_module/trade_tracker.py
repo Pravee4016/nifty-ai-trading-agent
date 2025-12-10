@@ -11,6 +11,7 @@ from typing import Dict, List, Optional
 import pytz
 
 from google.cloud import firestore
+from google.cloud.firestore import FieldFilter
 from config.settings import TIME_ZONE
 
 logger = logging.getLogger(__name__)
@@ -58,7 +59,9 @@ class TradeTracker:
                 "take_profit": signal.get("take_profit"),
                 "confidence": signal.get("confidence"),
                 "risk_reward": signal.get("risk_reward_ratio"),
+                "risk_reward": signal.get("risk_reward_ratio"),
                 "description": signal.get("description"),
+                "atr": signal.get("atr", 0.0),
                 "status": "OPEN",  # OPEN, WIN, LOSS, BREAKEVEN
                 "filters": signal.get("debug_info", {}),
                 "outcome": None
@@ -116,7 +119,7 @@ class TradeTracker:
             
             # Query open trades
             trades_ref = self.db.collection(self.collection_name)
-            query = trades_ref.where("status", "==", "OPEN").stream()
+            query = trades_ref.where(filter=FieldFilter("status", "==", "OPEN")).stream()
             
             closed_count = 0
             
@@ -138,6 +141,33 @@ class TradeTracker:
                 
                 # Determine if LONG or SHORT
                 is_long = "BULLISH" in signal_type or "SUPPORT" in signal_type or "LONG" in signal_type
+                atr = trade.get("atr", 0.0)
+                
+                # ===========================
+                # ATR TRAILING STOP LOGIC
+                # ===========================
+                # If trade is in profit, move SL to lock gains
+                # We use 1.5x ATR for trailing (tighter than initial 2.0x usually)
+                trailing_mult = 1.5
+                
+                if atr > 0:
+                    if is_long:
+                        # New potential SL = Current Price - (ATR * Mult)
+                        potential_sl = current_price - (atr * trailing_mult)
+                        # Only move SL UP
+                        if potential_sl > sl:
+                            logger.info(f"🔄 Trailing SL updated for {instrument}: {sl:.2f} -> {potential_sl:.2f}")
+                            sl = potential_sl
+                            # Update in DB deeply
+                            doc.reference.update({"stop_loss": sl})
+                    else:
+                        # SHORT
+                        potential_sl = current_price + (atr * trailing_mult)
+                        # Only move SL DOWN
+                        if potential_sl < sl:
+                            logger.info(f"🔄 Trailing SL updated for {instrument}: {sl:.2f} -> {potential_sl:.2f}")
+                            sl = potential_sl
+                            doc.reference.update({"stop_loss": sl})
                 
                 outcome = None
                 exit_price = None
@@ -212,7 +242,7 @@ class TradeTracker:
             
             # Query trades
             trades_ref = self.db.collection(self.collection_name)
-            query = trades_ref.where("date", ">=", start_date).stream()
+            query = trades_ref.where(filter=FieldFilter("date", ">=", start_date)).stream()
             
             total_alerts = 0
             wins = 0

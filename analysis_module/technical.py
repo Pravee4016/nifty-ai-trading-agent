@@ -68,7 +68,10 @@ class Signal:
     risk_reward_ratio: float
     timestamp: pd.Timestamp
     description: str
+    atr: float = 0.0
     debug_info: Dict = None
+    take_profit_2: float = 0.0
+    take_profit_3: float = 0.0
 
 
 @dataclass
@@ -170,16 +173,22 @@ class TechnicalAnalyzer:
             resistance_clusters = self._cluster_levels(resistance_levels)
 
             pdh, pdl = self.calculate_pdh_pdl(df)
-            pivot_std, _ = self._calculate_pivots(df_sub)
+            
+            # Add PDH/PDL to levels before clustering (Crucial for Breakout detection)
+            if pdh: resistance_levels.append(pdh)
+            if pdl: support_levels.append(pdl)
+            
+            pivots = self._calculate_pivots(df_sub)
+            pivot_std = pivots.get("pivot", 0.0)
 
             atr = self._calculate_atr(df_sub)
             volatility_score = self._calculate_volatility_score(df_sub)
 
-            logger.info(
-                "✅ S/R Calculated | "
-                f"Supports: {len(support_clusters)} | "
-                f"Resistances: {len(resistance_clusters)}"
+            msg = (
+                f"✅ S/R Calculated | Supports: {len(support_clusters)} {support_clusters[:3]}... | "
+                f"Resistances: {len(resistance_clusters)} {resistance_clusters[:3]}..."
             )
+            logger.info(msg)
 
             if DEBUG_MODE:
                 logger.debug(
@@ -251,26 +260,175 @@ class TechnicalAnalyzer:
 
         return clusters
 
+    def _calculate_multi_targets(
+        self,
+        entry_price: float,
+        stop_loss: float,
+        direction: str,
+        support_resistance: TechnicalLevels,
+        is_strong_trend: bool = False
+    ) -> Tuple[float, float, float]:
+        """
+        Calculate T1, T2, T3 based on S/R levels and R:R.
+        
+        T1 (Safe): Maximum of (Nearest Level, 1:1.5 RR if level too close)
+        T2 (Moderate): Next Key Level or 1:2 RR (Only if strong trend)
+        T3 (Aggressive): Level after that or 1:3 RR (Only if strong trend)
+        
+        Returns: (t1, t2, t3)
+        """
+        atr = support_resistance.atr
+        risk = abs(entry_price - stop_loss)
+        if risk == 0:
+            return 0.0, 0.0, 0.0
+            
+        t1, t2, t3 = 0.0, 0.0, 0.0
+        
+        if direction.upper() == "LONG":
+            # Identify resistance levels above entry
+            relevant_levels = [r for r in sorted(support_resistance.resistance_levels) if r > entry_price]
+            
+            # --- T1 ---
+            if relevant_levels:
+                t1 = relevant_levels[0]
+                # If risk reward < 1:1, push to next level or forcing 1.5R
+                if (t1 - entry_price) < risk:
+                     t1 = max(t1, entry_price + (risk * 1.5))
+            else:
+                t1 = entry_price + (risk * 1.5)
+                
+            # If trend is weak, stop here
+            if not is_strong_trend:
+                return t1, 0.0, 0.0
+                
+            # --- T2 ---
+            if len(relevant_levels) > 1:
+                t2 = relevant_levels[1]
+            else:
+                t2 = entry_price + (risk * 2.5)
+            if t2 <= t1:
+                t2 = max(t2, t1 + (risk * 1.0))
+
+            # --- T3 ---
+            if len(relevant_levels) > 2:
+                t3 = relevant_levels[2]
+            else:
+                t3 = entry_price + (risk * 4.0)
+            if t3 <= t2:
+                t3 = max(t3, t2 + (risk * 1.0))
+                
+        else: # SHORT
+            # Identify support levels below entry (High -> Low for iteration)
+            relevant_levels = [s for s in sorted(support_resistance.support_levels, reverse=True) if s < entry_price]
+            
+            # --- T1 ---
+            if relevant_levels:
+                t1 = relevant_levels[0]
+                if (entry_price - t1) < risk:
+                    t1 = min(t1, entry_price - (risk * 1.5))
+            else:
+                t1 = entry_price - (risk * 1.5)
+                
+            # If trend is weak, stop here
+            if not is_strong_trend:
+                return t1, 0.0, 0.0
+                
+            # --- T2 ---
+            if len(relevant_levels) > 1:
+                t2 = relevant_levels[1]
+            else:
+                t2 = entry_price - (risk * 2.5)
+            if t2 >= t1:
+                 t2 = min(t2, t1 - (risk * 1.0))
+                 
+            # --- T3 ---
+            if len(relevant_levels) > 2:
+                t3 = relevant_levels[2]
+            else:
+                t3 = entry_price - (risk * 4.0)
+            if t3 >= t2:
+                t3 = min(t3, t2 - (risk * 1.0))
+                
+        return t1, t2, t3
+
     def _calculate_pivots(
         self, df: pd.DataFrame
-    ) -> Tuple[float, float]:
+    ) -> Dict[str, float]:
         """Calculate pivot points (Standard & simple Fibonacci-style)."""
         try:
-            last_row = df.iloc[-1]
-            high, low, close = (
-                float(last_row["high"]),
-                float(last_row["low"]),
-                float(last_row["close"]),
-            )
+            high = df["high"].iloc[-1]
+            low = df["low"].iloc[-1]
+            close = df["close"].iloc[-1]
 
-            pivot_std = (high + low + close) / 3.0
-            pivot_fib = (high + low) / 2.0
+            pivot = (high + low + close) / 3
+            r1 = (2 * pivot) - low
+            s1 = (2 * pivot) - high
+            r2 = pivot + (high - low)
+            s2 = pivot - (high - low)
 
-            return pivot_std, pivot_fib
-
+            return {
+                "pivot": pivot,
+                "r1": r1,
+                "s1": s1,
+                "r2": r2,
+                "s2": s2,
+            }
         except Exception as e:
-            logger.warning(f"⚠️  Pivot calculation failed: {str(e)}")
-            return 0.0, 0.0
+            logger.error(f"Error calculating pivots: {e}")
+            return {}
+
+    def calculate_fibonacci_levels(self, df: pd.DataFrame, lookback: int = 50) -> Dict[str, float]:
+        """
+        Calculate Fibonacci Retracement levels from recent Swing High/Low.
+        
+        Args:
+            df: OHLCV DataFrame
+            lookback: Number of candles to scan for Swing High/Low (default 50)
+            
+        Returns:
+            Dict with '0.382', '0.5', '0.618' levels
+        """
+        try:
+            recent_data = df.tail(lookback)
+            if recent_data.empty:
+                return {}
+            
+            # Find Swing High and Low
+            swing_high = recent_data["high"].max()
+            swing_low = recent_data["low"].min()
+            range_diff = swing_high - swing_low
+            
+            # Determine direction (Trend) to know if we represent support or resistance
+            # For simplicity in this context, we return the Retracement levels from the Low upwards 
+            # (Support in uptrend) AND High downwards (Resistance in downtrend) is too complex for now.
+            # We will calculate "Retracement from Low to High" (assuming uptrend support checks)
+            # and "Retracement from High to Low" (assuming downtrend resistance checks).
+            
+            # Just returning plain levels relative to the range is ambiguous without trend.
+            # Standard approach: Return both "Retracement Up" (Support) and "Retracement Down" (Resistance) keys?
+            # Or simplified: Just levels.
+            
+            # Let's assume we are looking for SUPPORT levels (pullback in uptrend)
+            # 0% is High, 100% is Low.
+            # 38.2% Retracement = High - (Range * 0.382)
+            # 50% Retracement = High - (Range * 0.5)
+            # 61.8% Retracement = High - (Range * 0.618)
+            
+            fib_support = {
+                "0.236": swing_high - (range_diff * 0.236),
+                "0.382": swing_high - (range_diff * 0.382),
+                "0.5": swing_high - (range_diff * 0.5),
+                "0.618": swing_high - (range_diff * 0.618),
+                "0.786": swing_high - (range_diff * 0.786),
+                "swing_high": swing_high,
+                "swing_low": swing_low
+            }
+            
+            return fib_support
+            
+        except Exception as e:
+            logger.error(f"Error calculating Fibonacci levels: {e}")
+            return {}
 
     # =====================================================================
     # VOLUME ANALYSIS
@@ -423,12 +581,27 @@ class TechnicalAnalyzer:
             ema_long_15 = float(ema_long.iloc[-1])
             rsi_15 = float(self._calculate_rsi(df))
 
-            if ema_short_15 > ema_long_15 and rsi_15 >= 55:
+            if ema_short_15 > ema_long_15:
                 trend = "UP"
-            elif ema_short_15 < ema_long_15 and rsi_15 <= 45:
+            elif ema_short_15 < ema_long_15:
                 trend = "DOWN"
             else:
                 trend = "FLAT"
+            
+            # ====================
+            # Early Reversal Detection (reduce lag)
+            # ====================
+            # If trend is DOWN but price > 20EMA and RSI > 55 -> weak UP (Early Reversal)
+            current_close = float(df["close"].iloc[-1])
+            ema_20_15m = float(df["close"].ewm(span=20, adjust=False).mean().iloc[-1])
+            
+            if trend == "DOWN" and current_close > ema_20_15m and rsi_15 > 55:
+                trend = "UP"  # Early reversal
+                logger.info(f"🔄 Early trend reversal detected (Price > 15m EMA20 & RSI {rsi_15:.1f})")
+            
+            elif trend == "UP" and current_close < ema_20_15m and rsi_15 < 45:
+                trend = "DOWN" # Early correction
+                logger.info(f"🔄 Early trend correction detected (Price < 15m EMA20 & RSI {rsi_15:.1f})")
 
             context.update(
                 {
@@ -604,7 +777,9 @@ class TechnicalAnalyzer:
             surge_ratio = current_vol / avg_vol_20 if avg_vol_20 > 0 else 0
             
             # Surge conditions
-            above_average = surge_ratio >= 1.5
+            # Surge conditions
+            # Lowered from 1.5 to 1.2 to catch sustained moves with decent volume
+            above_average = surge_ratio >= 1.2
             above_recent = current_vol > max_vol_5
             
             has_surge = above_average and above_recent
@@ -644,20 +819,22 @@ class TechnicalAnalyzer:
             now = datetime.now(ist).time()
             
             # Morning volatility window
-            if time(9, 15) <= now < time(9, 30):
-                return False, "Morning volatility (09:15-09:30)"
+            if time(9, 15) <= now < time(9, 20):
+                return False, "Morning volatility (09:15-09:20)"
             
             # Lunch hour (low volume)
-            if time(12, 30) <= now < time(13, 30):
-                return False, "Lunch hour (12:30-13:30)"
+            if time(12, 30) <= now < time(13, 0):
+                return False, "Lunch hour (12:30-13:00)"
             
             # Last hour (poor follow-through)
             if time(14, 30) <= now <= time(15, 30):
                 return False, "Last hour (14:30-15:30)"
             
             # Good breakout windows
-            if (time(9, 30) <= now < time(12, 30)) or \
-               (time(13, 30) <= now < time(14, 30)):
+            # Relaxed start to 09:20 to catch early trends
+            # Europe open approach at 13:00
+            if (time(9, 20) <= now < time(12, 30)) or \
+               (time(13, 0) <= now < time(14, 30)):
                 return True, "Optimal breakout window"
             
             return False, "Outside breakout hours"
@@ -752,186 +929,273 @@ class TechnicalAnalyzer:
             # ------------------------
             # Bullish breakout
             # ------------------------
-            if support_resistance.resistance_levels:
-                nearest_resistance = float(
-                    support_resistance.resistance_levels[0]
-                )
 
-                # Check for breakout (High > Resistance)
-                if current_high > nearest_resistance:
+                    # Standard Breakout Check
+                    is_standard_breakout = False
+                    nearest_resistance = 0.0
                     
-                    # Filter: Must be consolidating OR have massive volume surge
-                    if not is_consolidating and not has_surge:
-                        logger.info(
-                            f"⏭️ Bullish breakout ignored (No consolidation/surge) | "
-                            f"Vol: {surge_ratio:.1f}x"
+                    if support_resistance.resistance_levels:
+                         # Robustly find nearest resistance
+                        sorted_resistances = sorted(
+                            support_resistance.resistance_levels, 
+                            key=lambda x: abs(x - current_price)
                         )
-                        return None
-                        
-                    # Filter: MTF Trend Alignment
-                    mtf_ok = (
-                        trend_dir == "UP"
-                        and rsi_15 >= MIN_RSI_BULLISH
-                    )
-
-                    if not mtf_ok:
-                        logger.info(
-                            "⏭️  Bullish breakout ignored (MTF filter) | "
-                            f"Trend15m: {trend_dir} | RSI15: {rsi_15:.1f}"
-                        )
+                        nearest_resistance = float(sorted_resistances[0])
+                        if current_high > nearest_resistance:
+                            is_standard_breakout = True
+                    
+                    # Combine triggers
+                    # If ORB breakout, we force the level to be ORB High
+                    if is_orb_breakout and orb_direction == "BULLISH":
+                         breakout_level = orb["high"]
+                         breakout_type = "ORB"
+                    elif is_standard_breakout:
+                         breakout_level = nearest_resistance
+                         breakout_type = "S/R"
                     else:
-                        logger.info(
-                            "🚀 Bullish breakout candidate | "
-                            f"Price: {current_price:.2f} > R: {nearest_resistance:.2f} | "
-                            f"Consolidation: {is_consolidating} | Surge: {has_surge}"
+                         breakout_level = 0.0
+                         breakout_type = None
+
+                    if breakout_type:
+                        
+                        # Filter: Must be consolidating OR have massive volume surge
+                        # EXCEPTION: ORB and PDH breaks don't always need consolidation
+                        is_major_level = (breakout_type == "ORB") or (abs(breakout_level - support_resistance.pdh) < 1.0)
+                        
+                        if not is_consolidating and not has_surge and not is_major_level:
+                            logger.info(
+                                f"⏭️ Bullish breakout ignored (No consolidation/surge) | "
+                                f"Vol: {surge_ratio:.1f}x"
+                            )
+                            return None
+                            
+                        # Filter: MTF Trend Alignment
+                        # EXCEPTION: ORB Breakouts set the trend
+                        mtf_ok = (
+                            trend_dir == "UP"
+                            and rsi_15 >= MIN_RSI_BULLISH
                         )
+                        
+                        if is_major_level: mtf_ok = True
 
-                        atr = support_resistance.atr
-                        sl = current_low - (atr * ATR_SL_MULTIPLIER)
-                        tp = current_price + (atr * ATR_TP_MULTIPLIER)
-                        risk_reward = (tp - current_price) / max(
-                            current_price - sl, 1e-6
-                        )
+                        if not mtf_ok:
+                            logger.info(
+                                "⏭️  Bullish breakout ignored (MTF filter) | "
+                                f"Trend15m: {trend_dir} | RSI15: {rsi_15:.1f}"
+                            )
+                        else:
+                            logger.info(
+                                f"🚀 Bullish ({breakout_type}) breakout candidate | "
+                                f"Price: {current_price:.2f} > Lvl: {breakout_level:.2f} | "
+                                f"Consolidation: {is_consolidating} | Surge: {has_surge}"
+                            )
 
-                        # Confidence Scoring
-                        confidence = 60.0
-                        if has_surge:
-                            confidence += 10
-                        if is_consolidating:
-                            confidence += 10
-                        if rsi_5 >= MIN_RSI_BULLISH:
-                            confidence += 5
-                        if trend_dir == "UP":
-                            confidence += 10
-                        if risk_reward >= MIN_RISK_REWARD_RATIO:
-                            confidence += 5
-                        # NEW: ORB boost
-                        if is_orb_breakout and orb_direction == "BULLISH":
-                            confidence += orb_boost
+                            atr = support_resistance.atr
+                            sl = current_low - (atr * ATR_SL_MULTIPLIER)
+                            
+                            # Strong Trend Logic
+                            is_strong_trend = (
+                                has_surge 
+                                and trend_dir == "UP" 
+                                and rsi_15 >= 60 
+                                and rsi_5 >= 60
+                            )
+                            
+                            tp1, tp2, tp3 = self._calculate_multi_targets(
+                                current_price, sl, "LONG", support_resistance, is_strong_trend
+                            )
+                            
+                            risk_reward = (tp1 - current_price) / max(
+                                current_price - sl, 1e-6
+                            )
 
-                        confidence = min(confidence, 95.0)
+                            # Confidence Scoring
+                            confidence = 60.0
+                            if has_surge:
+                                confidence += 10
+                            if is_consolidating:
+                                confidence += 10
+                            if rsi_5 >= MIN_RSI_BULLISH:
+                                confidence += 5
+                            if trend_dir == "UP":
+                                confidence += 10
+                            if risk_reward >= MIN_RISK_REWARD_RATIO:
+                                confidence += 5
+                            # NEW: ORB boost
+                            if is_orb_breakout and orb_direction == "BULLISH":
+                                confidence += orb_boost
 
-                        breakout_signal = Signal(
-                            signal_type=SignalType.BULLISH_BREAKOUT,
-                            instrument=self.instrument,
-                            timeframe="5MIN",
-                            price_level=nearest_resistance,
-                            entry_price=current_price,
-                            stop_loss=sl,
-                            take_profit=tp,
-                            confidence=confidence,
-                            volume_confirmed=has_surge,
-                            momentum_confirmed=(
-                                rsi_5 >= MIN_RSI_BULLISH
-                            ),
-                            risk_reward_ratio=risk_reward,
-                            timestamp=pd.Timestamp.now(),
-                            description=(
-                                f"Bullish breakout at {nearest_resistance:.2f} | "
-                                f"RR: {risk_reward:.2f} | "
-                                f"Vol Surge: {has_surge} | Consolidation: {is_consolidating}"
-                                f"{' | ORB Breakout' if is_orb_breakout and orb_direction == 'BULLISH' else ''}"
-                            ),
-                            debug_info={
-                                "surge_ratio": surge_ratio,
-                                "is_consolidating": is_consolidating,
-                                "rsi_5": rsi_5,
-                                "rsi_15": rsi_15,
-                                "trend_dir": trend_dir,
-                                "atr": atr,
-                            },
-                        )
+                            confidence = min(confidence, 95.0)
+
+                            breakout_signal = Signal(
+                                signal_type=SignalType.BULLISH_BREAKOUT,
+                                instrument=self.instrument,
+                                timeframe="5MIN",
+                                price_level=breakout_level,
+                                entry_price=current_price,
+                                stop_loss=sl,
+                                take_profit=tp1,
+                                take_profit_2=tp2,
+                                take_profit_3=tp3,
+                                confidence=confidence,
+                                volume_confirmed=has_surge,
+                                momentum_confirmed=(
+                                    rsi_5 >= MIN_RSI_BULLISH
+                                ),
+                                risk_reward_ratio=risk_reward,
+                                timestamp=pd.Timestamp.now(),
+                                description=(
+                                    f"Bullish breakout at {breakout_level:.2f} | "
+                                    f"RR: {risk_reward:.2f} | "
+                                    f"Vol Surge: {has_surge} | Consolidation: {is_consolidating}"
+                                    f"{' | ORB Breakout' if is_orb_breakout and orb_direction == 'BULLISH' else ''}"
+                                ),
+                                debug_info={
+                                    "surge_ratio": surge_ratio,
+                                    "is_consolidating": is_consolidating,
+                                    "rsi_5": rsi_5,
+                                    "rsi_15": rsi_15,
+                                    "trend_dir": trend_dir,
+                                    "atr": atr,
+                                    "is_strong_trend": is_strong_trend
+                                },
+                            )
 
             # ------------------------
             # Bearish breakdown
             # ------------------------
-            if support_resistance.support_levels:
-                nearest_support = float(
-                    support_resistance.support_levels[0]
-                )
 
+            # ------------------------
+            # Bearish breakdown
+            # ------------------------
+            # Standard Breakdown Check
+            is_standard_breakdown = False
+            nearest_support = 0.0
+            
+            if support_resistance.support_levels:
+                # Robustly find nearest support (closest to price)
+                sorted_supports = sorted(
+                    support_resistance.support_levels, 
+                    key=lambda x: abs(x - current_price)
+                )
+                nearest_support = float(sorted_supports[0])
                 if current_low < nearest_support:
+                    is_standard_breakdown = True
+
+            # Combine triggers
+            if is_orb_breakout and orb_direction == "BEARISH":
+                 breakdown_level = orb["low"]
+                 breakdown_type = "ORB"
+            elif is_standard_breakdown:
+                 breakdown_level = nearest_support
+                 breakdown_type = "S/R"
+            else:
+                 breakdown_level = 0.0
+                 breakdown_type = None
+
+            if breakdown_type:
                     
-                    # Filter: Must be consolidating OR have massive volume surge
-                    if not is_consolidating and not has_surge:
-                        logger.info(
-                            f"⏭️ Bearish breakdown ignored (No consolidation/surge) | "
-                            f"Vol: {surge_ratio:.1f}x"
-                        )
-                        return None
-                        
-                    mtf_ok = (
-                        trend_dir == "DOWN"
-                        and rsi_15 <= MAX_RSI_BEARISH
+                # Exception: Major Levels (ORB/PDL)
+                is_major_level = (breakdown_type == "ORB") or (support_resistance.pdl > 0 and abs(breakdown_level - support_resistance.pdl) < 1.0)
+
+                # Filter: Must be consolidating OR have massive volume surge
+                if not is_consolidating and not has_surge and not is_major_level:
+                    logger.info(
+                        f"⏭️ Bearish breakdown ignored (No consolidation/surge) | "
+                        f"Vol: {surge_ratio:.1f}x"
+                    )
+                    return None
+                    
+                mtf_ok = (
+                    trend_dir == "DOWN"
+                    and rsi_15 <= MAX_RSI_BEARISH
+                )
+                
+                if is_major_level: mtf_ok = True
+
+                if not mtf_ok:
+                    logger.info(
+                        "⏭️  Bearish breakdown ignored (MTF filter) | "
+                        f"Trend15m: {trend_dir} | RSI15: {rsi_15:.1f}"
+                    )
+                else:
+                    logger.info(
+                        f"📉 Bearish ({breakdown_type}) breakdown candidate | "
+                        f"Price: {current_price:.2f} < Lvl: {breakdown_level:.2f} | "
+                        f"Consolidation: {is_consolidating} | Surge: {has_surge}"
                     )
 
-                    if not mtf_ok:
-                        logger.info(
-                            "⏭️  Bearish breakdown ignored (MTF filter) | "
-                            f"Trend15m: {trend_dir} | RSI15: {rsi_15:.1f}"
-                        )
-                    else:
-                        logger.info(
-                            "📉 Bearish breakdown candidate | "
-                            f"Price: {current_price:.2f} < S: {nearest_support:.2f} | "
-                            f"Consolidation: {is_consolidating} | Surge: {has_surge}"
-                        )
+                    atr = support_resistance.atr
+                    sl = current_high + (atr * ATR_SL_MULTIPLIER)
+                    
+                    # Strong Trend Logic
+                    is_strong_trend = (
+                        has_surge 
+                        and trend_dir == "DOWN" 
+                        and rsi_15 <= 40 
+                        and rsi_5 <= 40
+                    )
+                    
+                    # Calculate Multi-Targets
+                    tp1, tp2, tp3 = self._calculate_multi_targets(
+                        current_price, sl, "SHORT", support_resistance, is_strong_trend
+                    )
+                    
+                    risk_reward = (current_price - tp1) / max(
+                        sl - current_price, 1e-6
+                    )
 
-                        atr = support_resistance.atr
-                        sl = current_high + (atr * ATR_SL_MULTIPLIER)
-                        tp = current_price - (atr * ATR_TP_MULTIPLIER)
-                        risk_reward = (current_price - tp) / max(
-                            sl - current_price, 1e-6
-                        )
+                    # Confidence Scoring
+                    confidence = 60.0
+                    if has_surge:
+                        confidence += 10
+                    if is_consolidating:
+                        confidence += 10
+                    if rsi_5 <= MAX_RSI_BEARISH:
+                        confidence += 5
+                    if trend_dir == "DOWN":
+                        confidence += 10
+                    if risk_reward >= MIN_RISK_REWARD_RATIO:
+                        confidence += 5
+                    # NEW: ORB boost
+                    if is_orb_breakout and orb_direction == "BEARISH":
+                        confidence += orb_boost
 
-                        # Confidence Scoring
-                        confidence = 60.0
-                        if has_surge:
-                            confidence += 10
-                        if is_consolidating:
-                            confidence += 10
-                        if rsi_5 <= MAX_RSI_BEARISH:
-                            confidence += 5
-                        if trend_dir == "DOWN":
-                            confidence += 10
-                        if risk_reward >= MIN_RISK_REWARD_RATIO:
-                            confidence += 5
-                        # NEW: ORB boost
-                        if is_orb_breakout and orb_direction == "BEARISH":
-                            confidence += orb_boost
+                    confidence = min(confidence, 95.0)
 
-                        confidence = min(confidence, 95.0)
-
-                        breakout_signal = Signal(
-                            signal_type=SignalType.BEARISH_BREAKDOWN,
-                            instrument=self.instrument,
-                            timeframe="5MIN",
-                            price_level=nearest_support,
-                            entry_price=current_price,
-                            stop_loss=sl,
-                            take_profit=tp,
-                            confidence=confidence,
-                            volume_confirmed=has_surge,
-                            momentum_confirmed=(
-                                rsi_5 <= MAX_RSI_BEARISH
-                            ),
-                            risk_reward_ratio=risk_reward,
-                            timestamp=pd.Timestamp.now(),
-                            description=(
-                                f"Bearish breakdown at {nearest_support:.2f} | "
-                                f"RR: {risk_reward:.2f} | "
-                                f"Vol Surge: {has_surge} | Consolidation: {is_consolidating}"
-                                f"{' | ORB Breakout' if is_orb_breakout and orb_direction == 'BEARISH' else ''}"
-                            ),
-                            debug_info={
-                                "surge_ratio": surge_ratio,
-                                "is_consolidating": is_consolidating,
-                                "rsi_5": rsi_5,
-                                "rsi_15": rsi_15,
-                                "trend_dir": trend_dir,
-                                "atr": atr,
-                            },
-                        )
+                    breakout_signal = Signal(
+                        signal_type=SignalType.BEARISH_BREAKOUT,
+                        instrument=self.instrument,
+                        timeframe="5MIN",
+                        price_level=breakdown_level,
+                        entry_price=current_price,
+                        stop_loss=sl,
+                        take_profit=tp1,
+                        take_profit_2=tp2,
+                        take_profit_3=tp3,
+                        confidence=confidence,
+                        volume_confirmed=has_surge,
+                        momentum_confirmed=(
+                            rsi_5 <= MAX_RSI_BEARISH
+                        ),
+                        risk_reward_ratio=risk_reward,
+                        timestamp=pd.Timestamp.now(),
+                        description=(
+                            f"Bearish breakdown at {breakdown_level:.2f} | "
+                            f"RR: {risk_reward:.2f} | "
+                            f"Vol Surge: {has_surge} | Consolidation: {is_consolidating}"
+                            f"{' | ORB Breakout' if is_orb_breakout and orb_direction == 'BEARISH' else ''}"
+                        ),
+                        atr=atr,
+                        debug_info={
+                            "surge_ratio": surge_ratio,
+                            "is_consolidating": is_consolidating,
+                            "rsi_5": rsi_5,
+                            "rsi_15": rsi_15,
+                            "trend_dir": trend_dir,
+                            "atr": atr,
+                        },
+                    )
 
             return breakout_signal
 
@@ -1063,8 +1327,9 @@ class TechnicalAnalyzer:
             current = df.iloc[-1]
             current_price = float(current["close"])
             
-            # Look back to check for recent breakouts
-            recent_bars = df.tail(10)
+            # Look back to check for recent breakouts (Increased to 50 bars / ~4 hours)
+            # to capture breakouts that happened earlier in the session
+            recent_bars = df.tail(50)
             recent_highs = recent_bars["high"].values
             recent_lows = recent_bars["low"].values
 
@@ -1138,52 +1403,46 @@ class TechnicalAnalyzer:
                     # ====================
                     # Entry, SL, TP Logic
                     # ====================
+                    
+                    # Determine Strong Trend
+                    trend_15m = higher_tf_context.get("trend_direction", "FLAT") if higher_tf_context else "FLAT"
+                    rsi_15 = float(higher_tf_context.get("rsi_15", 50)) if higher_tf_context else 50.0
+                    
+                    is_strong_trend = False
+                    if is_long:
+                        is_strong_trend = trend_15m == "UP" and rsi_15 >= 55
+                    else:
+                        is_strong_trend = trend_15m == "DOWN" and rsi_15 <= 45
+
+                    # ====================
+                    # Entry, SL, TP Logic
+                    # ====================
                     if is_long:
                         # LONG: Support retest
                         entry_price = current_price
                         stop_loss = level - (atr * 0.5)  # SL below support
                         
-                        # Find next resistance for TP
-                        next_resistance = None
-                        for r in support_resistance.resistance_levels:
-                            if r > current_price:
-                                next_resistance = r
-                                break
-                        
-                        if next_resistance:
-                            take_profit = next_resistance
-                        elif support_resistance.pdh > current_price:
-                            take_profit = support_resistance.pdh
-                        else:
-                            take_profit = current_price + (atr * 2.0)
+                        tp1, tp2, tp3 = self._calculate_multi_targets(
+                            entry_price, stop_loss, "LONG", support_resistance, is_strong_trend
+                        )
                     
                     else:
                         # SHORT: Resistance retest
                         entry_price = current_price
                         stop_loss = level + (atr * 0.5)  # SL above resistance
                         
-                        # Find next support for TP
-                        next_support = None
-                        for s in support_resistance.support_levels:
-                            if s < current_price:
-                                next_support = s
-                                break
-                        
-                        if next_support:
-                            take_profit = next_support
-                        elif support_resistance.pdl < current_price and support_resistance.pdl > 0:
-                            take_profit = support_resistance.pdl
-                        else:
-                            take_profit = current_price - (atr * 2.0)
+                        tp1, tp2, tp3 = self._calculate_multi_targets(
+                            entry_price, stop_loss, "SHORT", support_resistance, is_strong_trend
+                        )
                     
-                    # Calculate R:R
+                    # Calculate R:R using T1
                     risk = abs(entry_price - stop_loss)
-                    reward = abs(take_profit - entry_price)
+                    reward = abs(tp1 - entry_price)
                     rr = reward / risk if risk > 0 else 0
                     
                     # Skip if R:R too low
-                    if rr < 1.5:
-                        logger.info(f"⏭️ Skipping retest - poor R:R ({rr:.2f})")
+                    if round(rr, 2) < MIN_RISK_REWARD_RATIO:
+                        logger.info(f"⏭️ Skipping retest - poor R:R ({rr:.2f}) < {MIN_RISK_REWARD_RATIO}")
                         continue
 
                     # ====================
@@ -1245,19 +1504,23 @@ class TechnicalAnalyzer:
                         price_level=level,
                         entry_price=entry_price,
                         stop_loss=stop_loss,
-                        take_profit=take_profit,
+                        take_profit=tp1,
+                        take_profit_2=tp2,
+                        take_profit_3=tp3,
                         confidence=confidence,
                         volume_confirmed=False,
                         momentum_confirmed=False,
                         risk_reward_ratio=rr,
                         timestamp=pd.Timestamp.now(),
                         description=description,
+                        atr=atr,
                         debug_info={
                             "distance_pct": distance_pct,
                             "broke_above": broke_above,
                             "broke_below": broke_below,
                             "price_above_level": price_above_level,
                             "is_role_reversal": "role reversal" in description,
+                            "is_strong_trend": is_strong_trend
                         },
                     )
 
@@ -1406,24 +1669,26 @@ class TechnicalAnalyzer:
                     sl_price = prev_candle["high"] - (mother_range * 0.5)
 
             # ====================
-            # 6. Smart Target Calculation
-            # ====================
-            tp_price, rr_ratio, target_reason = self._calculate_inside_bar_targets(
-                entry_price,
-                sl_price,
-                direction,
-                support_resistance,
-                current_price
-            )
-            
-            if tp_price is None:
-                logger.info("⏭️ Inside bar skipped - no valid target or poor R:R")
-                return None
-
-            # ====================
-            # 7. Volume Confirmation
+            # 6. Volume Confirmation
             # ====================
             vol_confirmed, vol_ratio, _ = self.check_volume_confirmation(df)
+
+            # ====================
+            # 7. Smart Target Calculation
+            # ====================
+            is_strong_trend = vol_confirmed
+            
+            tp1, tp2, tp3 = self._calculate_multi_targets(
+                entry_price, sl_price, direction, support_resistance, is_strong_trend
+            )
+            
+            risk = abs(entry_price - sl_price)
+            reward = abs(tp1 - entry_price)
+            rr_ratio = reward / risk if risk > 0 else 0
+            
+            if tp1 == 0 or rr_ratio < 1.0:
+                logger.info(f"⏭️ Inside bar skipped - no valid target or poor R:R ({rr:.2f} < {MIN_RISK_REWARD_RATIO})")
+                return None
 
             # ====================
             # 8. Confidence Scoring
@@ -1470,7 +1735,6 @@ class TechnicalAnalyzer:
             # ====================
             description = (
                 f"Inside bar {direction} breakout | "
-                f"Target: {target_reason} | "
                 f"VWAP: {'✓' if ((direction=='LONG' and price_above_vwap) or (direction=='SHORT' and not price_above_vwap)) else '✗'} | "
                 f"20EMA: {'✓' if ((direction=='LONG' and price_above_ema20) or (direction=='SHORT' and not price_above_ema20)) else '✗'} | "
                 f"15m: {trend_15m} | PrevDay: {prev_day_trend}"
@@ -1478,7 +1742,7 @@ class TechnicalAnalyzer:
 
             logger.info(
                 f"🎯 HIGH-QUALITY INSIDE BAR {direction} | "
-                f"Entry: {entry_price:.2f} | SL: {sl_price:.2f} | TP: {tp_price:.2f} | "
+                f"Entry: {entry_price:.2f} | SL: {sl_price:.2f} | T1: {tp1:.2f} | "
                 f"R:R: {rr_ratio:.2f} | Conf: {confidence:.0f}%"
             )
 
@@ -1489,7 +1753,9 @@ class TechnicalAnalyzer:
                 price_level=float(curr_candle["close"]),
                 entry_price=entry_price,
                 stop_loss=sl_price,
-                take_profit=tp_price,
+                take_profit=tp1,
+                take_profit_2=tp2,
+                take_profit_3=tp3,
                 confidence=confidence,
                 volume_confirmed=vol_confirmed,
                 momentum_confirmed=(rsi_5 >= 50 if direction == "LONG" else rsi_5 <= 50),
@@ -1506,9 +1772,9 @@ class TechnicalAnalyzer:
                     "vwap_5m": vwap_5m,
                     "ema_20_5m": ema_20_5m,
                     "prev_day_trend": prev_day_trend,
-                    "target_reason": target_reason,
                     "rsi_5": rsi_5,
                     "vol_ratio": vol_ratio,
+                    "is_strong_trend": is_strong_trend
                 },
             )
 
@@ -1641,7 +1907,7 @@ class TechnicalAnalyzer:
                 
                 # Skip if R:R too low
                 if rr < 1.5:
-                    logger.info(f"⏭️ Skipping inside bar - poor R:R ({rr:.2f})")
+                    logger.info(f"⏭️ Skipping inside bar - poor R:R ({rr:.2f} < {MIN_RISK_REWARD_RATIO})")
                     return None, 0.0, "R:R < 1.5"
                 
                 return target, rr, target_reason
@@ -1860,12 +2126,35 @@ class TechnicalAnalyzer:
                         support_level = support_resistance.pdl
 
                 if at_support:
-                    # Check trend alignment (prefer uptrend or neutral)
+                    # Logic Update: Allow counter-trend IF confirmed by RSI/Volume
+                    is_valid_setup = False
+                    setup_reason = ""
+                    
+                    if DEBUG_MODE:
+                         logger.debug(f"DEBUG: PinBar at Support. Trend: {trend_dir}, RSI: {rsi_15}")
+                    
                     if trend_dir in ["UP", "FLAT"]:
+                        is_valid_setup = True
+                        setup_reason = "Trend Alignment"
+                    elif trend_dir == "DOWN":
+                        # Counter-trend checks
+                        # Require Oversold RSI OR Volume Surge
+                        vol_surge, _, _ = self._detect_volume_surge(df)
+                        if rsi_15 < 40:
+                            is_valid_setup = True
+                            setup_reason = f"Counter-Trend (RSI {rsi_15:.1f} Oversold)"
+                        elif vol_surge:
+                            is_valid_setup = True
+                            setup_reason = "Counter-Trend (Volume Surge)"
+                            
+                    if not is_valid_setup:
+                         if DEBUG_MODE:
+                             logger.debug(f"DEBUG: Setup Invalid. RSI {rsi_15} not < 40 and No Surge")
+
+                    if is_valid_setup:
                         logger.info(
-                            f"🔨 BULLISH PIN BAR detected | "
+                            f"🔨 BULLISH PIN BAR detected | {setup_reason} | "
                             f"Lower wick: {lower_wick_pct*100:.1f}% | "
-                            f"Body: {body_pct*100:.1f}% | "
                             f"At support: {support_level:.2f}"
                         )
 
@@ -1896,7 +2185,9 @@ class TechnicalAnalyzer:
                         confidence = 65.0
                         if trend_dir == "UP":
                             confidence += 10
-                        if rsi_15 < 50:  # Oversold
+                        if rsi_15 < 40:  # Deep Oversold
+                            confidence += 10
+                        elif rsi_15 < 50:
                             confidence += 5
                         if lower_wick_pct > 0.7:  # Very long wick
                             confidence += 5
@@ -1915,7 +2206,7 @@ class TechnicalAnalyzer:
                             risk_reward_ratio=rr,
                             timestamp=pd.Timestamp.now(),
                             description=(
-                                f"Bullish pin bar at {support_level:.2f} | "
+                                f"Bullish pin bar at {support_level:.2f} | {setup_reason} | "
                                 f"Lower wick: {lower_wick_pct*100:.0f}% | RR: {rr:.1f}"
                             ),
                             debug_info={
@@ -1949,12 +2240,28 @@ class TechnicalAnalyzer:
                         resistance_level = support_resistance.pdh
 
                 if at_resistance:
-                    # Check trend alignment (prefer downtrend or neutral)
+                    # Logic Update: Allow counter-trend IF confirmed by RSI/Volume
+                    is_valid_setup = False
+                    setup_reason = ""
+                    
                     if trend_dir in ["DOWN", "FLAT"]:
+                        is_valid_setup = True
+                        setup_reason = "Trend Alignment"
+                    elif trend_dir == "UP":
+                        # Counter-trend checks
+                        # Require Overbought RSI OR Volume Surge
+                        vol_surge, _, _ = self._detect_volume_surge(df)
+                        if rsi_15 > 60:
+                            is_valid_setup = True
+                            setup_reason = f"Counter-Trend (RSI {rsi_15:.1f} Overbought)"
+                        elif vol_surge:
+                            is_valid_setup = True
+                            setup_reason = "Counter-Trend (Volume Surge)"
+
+                    if is_valid_setup:
                         logger.info(
-                            f"⭐ BEARISH PIN BAR detected | "
+                            f"⭐ BEARISH PIN BAR detected | {setup_reason} | "
                             f"Upper wick: {upper_wick_pct*100:.1f}% | "
-                            f"Body: {body_pct*100:.1f}% | "
                             f"At resistance: {resistance_level:.2f}"
                         )
 
@@ -1985,7 +2292,9 @@ class TechnicalAnalyzer:
                         confidence = 65.0
                         if trend_dir == "DOWN":
                             confidence += 10
-                        if rsi_15 > 50:  # Overbought
+                        if rsi_15 > 60:  # Deep Overbought
+                            confidence += 10
+                        elif rsi_15 > 50:
                             confidence += 5
                         if upper_wick_pct > 0.7:  # Very long wick
                             confidence += 5
@@ -2004,7 +2313,7 @@ class TechnicalAnalyzer:
                             risk_reward_ratio=rr,
                             timestamp=pd.Timestamp.now(),
                             description=(
-                                f"Bearish pin bar at {resistance_level:.2f} | "
+                                f"Bearish pin bar at {resistance_level:.2f} | {setup_reason} | "
                                 f"Upper wick: {upper_wick_pct*100:.0f}% | RR: {rr:.1f}"
                             ),
                             debug_info={
@@ -2311,6 +2620,8 @@ class TechnicalAnalyzer:
             
             if atr_pct < MIN_ATR_PERCENT:
                 return True, f"Low volatility (ATR: {atr_pct:.2f}%)"
+            else:
+                logger.info(f"✅ Volatility OK | ATR: {atr_pct:.4f}% (> {MIN_ATR_PERCENT}%)")
             
             # 2. Check VWAP oscillation (choppy price action)
             _, vwap, _ = self._calculate_vwap(df)
@@ -2339,7 +2650,7 @@ class TechnicalAnalyzer:
     # =====================================================================
 
     def analyze_with_multi_tf(
-        self, df_5m: pd.DataFrame, higher_tf_context: Dict
+        self, df_5m: pd.DataFrame, higher_tf_context: Dict, df_15m: pd.DataFrame = None
     ) -> Dict:
         """
         Full analysis using 5m data + 15m higher timeframe context.
@@ -2363,7 +2674,12 @@ class TechnicalAnalyzer:
                 return result
 
             pdh, pdl = self.calculate_pdh_pdl(df_5m)
-            levels = self.calculate_support_resistance(df_5m)
+            
+            # Use 15m data for Support/Resistance if available (Clean Levels)
+            # Otherwise fall back to 5m (Noisy but better than nothing)
+            sr_source_df = df_15m if df_15m is not None and not df_15m.empty else df_5m
+            levels = self.calculate_support_resistance(sr_source_df)
+            
             vol_confirmed, vol_ratio, _ = self.check_volume_confirmation(df_5m)
             breakout = self.detect_breakout(df_5m, levels, higher_tf_context)
             retest = self.detect_retest_setup(df_5m, levels, higher_tf_context)
