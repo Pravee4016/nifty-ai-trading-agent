@@ -1370,6 +1370,82 @@ class TechnicalAnalyzer:
             logger.error(f"❌ False breakout detection failed: {str(e)}")
             return False, details
 
+    def _validate_retest_structure(
+        self, 
+        df: pd.DataFrame, 
+        level: float, 
+        direction: str
+    ) -> Tuple[bool, str]:
+        """
+        Validate retest is actual bounce, not breakdown.
+        
+        Validates:
+        1. Penetration depth (< 0.5 ATR below support / above resistance)
+        2. Bounce strength (close must be 25%+ away from wick)
+        3. Volume confirmation (> 70% of recent average)
+        
+        Args:
+            df: OHLCV DataFrame
+            level: Support/resistance level being tested
+            direction: "LONG" for support retest, "SHORT" for resistance
+        
+        Returns:
+            (is_valid, reason)
+        """
+        try:
+            curr = df.iloc[-1]
+            atr = self._calculate_atr(df)
+            
+            # Volume check
+            if "volume" in df.columns and df["volume"].sum() > 0:
+                avg_volume = df["volume"].tail(10).mean()
+                if curr["volume"] < avg_volume * 0.7:
+                    return False, f"Low volume: {curr['volume']:.0f} < {avg_volume*0.7:.0f}"
+            
+            if direction == "LONG":
+                # Support retest validation
+                
+                # Check 1: Penetration (how far below support?)
+                penetration = level - curr["low"]
+                max_penetration = atr * 0.5
+                
+                if penetration > max_penetration:
+                    return False, f"Deep penetration: {penetration:.2f} pts (max {max_penetration:.2f})"
+                
+                # Check 2: Bounce strength (close away from low)
+                bounce_distance = curr["close"] - curr["low"]
+                candle_range = curr["high"] - curr["low"]
+                
+                if candle_range > 0:
+                    bounce_pct = (bounce_distance / candle_range) * 100
+                    if bounce_pct < 25.0:
+                        return False, f"Weak bounce: {bounce_pct:.0f}% (need 25%+)"
+                    return True, f"Valid bounce: {bounce_pct:.0f}% from low, penetration {penetration:.2f} pts"
+                return True, "Valid structure"
+            
+            else:  # SHORT - resistance retest
+                # Same logic inverted
+                penetration = curr["high"] - level
+                max_penetration = atr * 0.5
+                
+                if penetration > max_penetration:
+                    return False, f"Deep penetration: {penetration:.2f} pts"
+                
+                bounce_distance = curr["high"] - curr["close"]
+                candle_range = curr["high"] - curr["low"]
+                
+                if candle_range > 0:
+                    bounce_pct = (bounce_distance / candle_range) * 100
+                    if bounce_pct < 25.0:
+                        return False, f"Weak bounce: {bounce_pct:.0f}%"
+                    return True, f"Valid bounce: {bounce_pct:.0f}% from high"
+                return True, "Valid structure"
+        
+        except Exception as e:
+            logger.warning(f"⚠️ Retest structure validation failed: {e}")
+            return True, "Validation skipped (error)"  # Don't block on errors
+
+
     def detect_retest_setup(
         self, 
         df: pd.DataFrame, 
@@ -1461,6 +1537,21 @@ class TechnicalAnalyzer:
                         f"Price: {current_price:.2f} | Level: {level:.2f} | "
                         f"Dist: {distance_pct:.3f}%"
                     )
+
+                    # NEW: Validate bounce structure
+                    direction_for_validation = "LONG" if is_long else "SHORT"
+                    is_valid, validation_reason = self._validate_retest_structure(
+                        df, level, direction_for_validation
+                    )
+                    
+                    if not is_valid:
+                        logger.info(
+                            f"⏭️ Retest rejected: {validation_reason} | "
+                            f"Level: {level:.2f}, Direction: {direction_for_validation}"
+                        )
+                        continue  # Skip this signal, try next level
+                    
+                    logger.info(f"✅ Retest validated: {validation_reason}")
 
                     atr = support_resistance.atr
                     
