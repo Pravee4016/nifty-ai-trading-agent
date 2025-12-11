@@ -266,10 +266,13 @@ class TelegramBot:
             ist = pytz.timezone("Asia/Kolkata")
             now_ist = datetime.now(ist)
 
+            # Determine level type from description
+            level_type = "Resistance" if "resistance" in desc.lower() or "PDH" in desc else "Support" if "support" in desc.lower() or "PDL" in desc else "Level"
+            
             message = (
                 f"{emoji} {ALERT_TYPES.get('RETEST', 'RETEST')} {direction}\n\n"
                 f"📊 <b>{instrument}</b>\n"
-                f"📍 Key Level: {level:.2f}\n\n"
+                f"📍 Near {level_type}: {level:.2f}\n\n"
                 f"<b>💰 Entry:</b> {entry:.2f}\n"
                 f"<b>🛑 Stop Loss:</b> {sl:.2f}\n"
                 f"<b>{self._format_targets(signal)}</b>\n"
@@ -383,18 +386,13 @@ class TelegramBot:
                 
                 message += "\n"
             
-            # Events summary
-            stats = summary_data.get("statistics", {})
-            message += "<b>🎯 Today's Events</b>\n"
-            message += f"🚀 Breakouts: {stats.get('breakouts', 0)}\n"
-            message += f"📉 Breakdowns: {stats.get('breakdowns', 0)}\n"
-            message += f"🔄 Retests: {stats.get('retests', 0)}\n"
-            message += f"↩️ Reversals: {stats.get('reversals', 0)}\n\n"
+            # Events summary block removed as per user request (redundant with Performance)
+
             
             # Performance stats
             perf = summary_data.get("performance", {})
             if perf and perf.get("total_alerts", 0) > 0:
-                message += "<b>📊 Performance (Last 24h)</b>\n"
+                message += "<b>📊 Performance (Today)</b>\n"
                 message += f"Total Alerts: {perf.get('total_alerts', 0)}\n"
                 
                 # Only show win rate if we have closed trades
