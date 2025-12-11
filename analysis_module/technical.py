@@ -319,10 +319,11 @@ class TechnicalAnalyzer:
                 t2 = max(t2, t1 + (risk * 1.0))
 
             # --- T3 ---
+            # Cap at 3x for realistic intraday targets (was 4x)
             if len(relevant_levels) > 2:
                 t3 = relevant_levels[2]
             else:
-                t3 = entry_price + (risk * 4.0)
+                t3 = entry_price + (risk * 3.0)  # Changed from 4.0
             if t3 <= t2:
                 t3 = max(t3, t2 + (risk * 1.0))
                 
@@ -354,10 +355,11 @@ class TechnicalAnalyzer:
                  t2 = min(t2, t1 - (risk * 1.0))
                  
             # --- T3 ---
+            # Cap at 3x for realistic intraday targets (was 4x)
             if len(relevant_levels) > 2:
                 t3 = relevant_levels[2]
             else:
-                t3 = entry_price - (risk * 4.0)
+                t3 = entry_price - (risk * 3.0)  # ← Changed from 4.0 to 3.0
             if t3 >= t2:
                 t3 = min(t3, t2 - (risk * 1.0))
         
