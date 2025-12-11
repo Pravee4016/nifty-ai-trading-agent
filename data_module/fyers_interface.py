@@ -46,6 +46,46 @@ class FyersApp:
         except Exception as e:
             logger.error(f"❌ Failed to initialize Fyers Model: {e}")
 
+    def validate_session(self) -> bool:
+        """
+        Validate if the current Fyers session is active.
+        Returns True if session is valid, False otherwise.
+        """
+        if not self.fyers:
+            return False
+        
+        try:
+            # Try a simple API call to check token validity
+            test_data = {"symbols": "NSE:NIFTY50-INDEX"}
+            response = self.fyers.quotes(data=test_data)
+            
+            if response.get("s") == "ok":
+                logger.debug("✅ Fyers session is valid")
+                return True
+            else:
+                error_msg = response.get('message', 'Unknown')
+                if 'token' in error_msg.lower() or 'invalid' in error_msg.lower():
+                    logger.warning(f"⚠️ Fyers token expired or invalid: {error_msg}")
+                    return False
+                return False
+        except Exception as e:
+            logger.warning(f"⚠️ Fyers session validation failed: {e}")
+            return False
+    
+    def refresh_token_from_env(self) -> bool:
+        """
+        Attempt to refresh token from environment variable.
+        Useful if token is updated externally.
+        Returns True if new token loaded successfully.
+        """
+        new_token = os.getenv("FYERS_ACCESS_TOKEN")
+        if new_token and new_token != self.access_token:
+            logger.info("🔄 Attempting to refresh Fyers token from environment")
+            self.access_token = new_token
+            self.initialize_session()
+            return self.validate_session()
+        return False
+
     def get_option_chain(self, symbol: str) -> Optional[Dict[str, Any]]:
         """
         Fetch option chain for the given symbol.
@@ -90,6 +130,14 @@ class FyersApp:
             # Try re-initializing if token is available
             self.initialize_session()
             if not self.fyers:
+                logger.debug("Fyers not available, caller will use fallback")
+                return None
+        
+        # Validate session before making call
+        if not self.validate_session():
+            logger.warning("⚠️ Fyers session invalid, trying token refresh...")
+            if not self.refresh_token_from_env():
+                logger.info("ℹ️ Fyers unavailable - system will use yfinance fallback")
                 return None
                 
         fyers_symbol = self.mapper.get(symbol)
