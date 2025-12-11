@@ -7,25 +7,49 @@ import time
 
 logger = logging.getLogger(__name__)
 
+# Try to import OAuth manager (optional, graceful fallback)
+try:
+    from data_module.fyers_oauth import get_oauth_manager
+    OAUTH_AVAILABLE = True
+except ImportError:
+    OAUTH_AVAILABLE = False
+    logger.debug("OAuth manager not available, using basic token auth")
+
 class FyersApp:
     def __init__(self, app_id: str, secret_id: Optional[str] = None, access_token: Optional[str] = None):
         self.client_id = app_id  # App ID (e.g., DURQKS8D17-100)
         self.secret_key = secret_id
         self.access_token = access_token
         self.fyers: Optional[fyersModel.FyersModel] = None
+        self.oauth_manager = None
         self.mapper = {
             "NIFTY": "NSE:NIFTY50-INDEX",
             "BANKNIFTY": "NSE:NIFTYBANK-INDEX",
             "FINNIFTY": "NSE:FINNIFTY-INDEX"
         }
         
+        # Try to use OAuth if available
+        if OAUTH_AVAILABLE and secret_id:
+            try:
+                self.oauth_manager = get_oauth_manager()
+                logger.info("🔐 Using OAuth manager for automatic token refresh")
+            except Exception as e:
+                logger.debug(f"OAuth manager not initialized: {e}")
+        
         self.initialize_session()
 
     def initialize_session(self):
         """
         Initialize Fyers Model.
-        Requires access_token. If not provided, it attempts to read from env or file.
+        Requires access_token. If not provided, it attempts to read from env or OAuth.
         """
+        # Try OAuth first if available
+        if self.oauth_manager and self.oauth_manager.is_authorized():
+            self.access_token = self.oauth_manager.get_valid_access_token()
+            if self.access_token:
+                logger.info("✅ Using OAuth-managed access token")
+        
+        # Fallback to environment variable
         if not self.access_token:
             # Try to load from env
             self.access_token = os.getenv("FYERS_ACCESS_TOKEN")
