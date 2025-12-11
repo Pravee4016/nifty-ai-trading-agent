@@ -491,13 +491,47 @@ class TechnicalAnalyzer:
 
             if DEBUG_MODE:
                 logger.debug(f"   Volume threshold: {MIN_VOLUME_RATIO}x")
-
             return is_confirmed, ratio, info
 
         except Exception as e:
             logger.error(f"❌ Volume check failed: {str(e)}")
             # Default to True on error to not block price signals if data is bad
             return True, 0.0, "Error (Bypassed)"
+
+    def _calculate_rvol(self, df: pd.DataFrame) -> Tuple[float, str]:
+        """
+        Calculate RVOL (Relative Volume) - current volume vs average for this time of day.
+        
+        More accurate than simple volume ratio as it accounts for time-of-day patterns
+        (e.g., higher volume at market open/close).
+        
+        Returns:
+            (rvol, description)
+        """
+        try:
+            if len(df) < 20:
+                return 1.0, "Insufficient data"
+            
+            # Check if volume data exists
+            total_volume = df["volume"].sum()
+            if total_volume == 0:
+                return 1.0, "Index (No Vol)"
+            
+            current_vol = float(df["volume"].iloc[-1])
+            
+            # Simple RVOL: current vs recent 20-period average
+            # (For true time-of-day RVOL, would need multi-day data with timestamps)
+            avg_vol = float(df["volume"].tail(20).mean())
+            
+            rvol = current_vol / avg_vol if avg_vol > 0 else 1.0
+            
+            description = f"RVOL {rvol:.2f}x (Vol: {current_vol:.0f} vs Avg: {avg_vol:.0f})"
+            
+            return rvol, description
+        
+        except Exception as e:
+            logger.warning(f"⚠️ RVOL calculation failed: {e}")
+            return 1.0, "RVOL calc error"
 
     # =====================================================================
     # OPENING RANGE BREAKOUT (ORB)
@@ -1026,6 +1060,19 @@ class TechnicalAnalyzer:
                                 f"Vol: {surge_ratio:.1f}x"
                             )
                             return None
+                        
+                        # NEW: RVOL Filter (Relative Volume check)
+                        rvol, rvol_desc = self._calculate_rvol(df)
+                        MIN_RVOL_BREAKOUT = 1.5  # Require 1.5x relative volume for breakouts
+                        
+                        if rvol < MIN_RVOL_BREAKOUT and not is_major_level:
+                            logger.info(
+                                f"⏭️ Bullish breakout ignored (Low RVOL) | "
+                                f"{rvol_desc} < {MIN_RVOL_BREAKOUT}x required"
+                            )
+                            return None
+                        
+                        logger.info(f"✅ RVOL check passed | {rvol_desc}")
                             
                         # Filter: MTF Trend Alignment
                         # Use ADAPTIVE RSI thresholds from context (fallback to static)
@@ -1166,6 +1213,19 @@ class TechnicalAnalyzer:
                         f"Vol: {surge_ratio:.1f}x"
                     )
                     return None
+            
+                # NEW: RVOL Filter (Relative Volume check)
+                rvol, rvol_desc = self._calculate_rvol(df)
+                MIN_RVOL_BREAKOUT = 1.5  # Require 1.5x relative volume
+                
+                if rvol < MIN_RVOL_BREAKOUT and not is_major_level:
+                    logger.info(
+                        f"⏭️ Bearish breakdown ignored (Low RVOL) | "
+                        f"{rvol_desc} < {MIN_RVOL_BREAKOUT}x required"
+                    )
+                    return None
+                
+                logger.info(f"✅ RVOL check passed | {rvol_desc}")
                  # Filter: MTF Alignment
                 # Use ADAPTIVE RSI thresholds from context (fallback to static)
                 rsi_short_threshold = higher_tf_context.get("rsi_short_threshold", MAX_RSI_BEARISH)
