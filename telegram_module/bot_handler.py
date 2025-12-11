@@ -432,6 +432,7 @@ class TelegramBot:
                 message += f"{ai_summary}\n\n"
             
             # Statistics
+            stats = summary_data.get("stats", {})
             message += "<b>📊 Session Stats</b>\n"
             message += f"📡 Data Fetches: {stats.get('data_fetches', 0)}\n"
             message += f"🔍 Analyses: {stats.get('analyses_run', 0)}\n"
