@@ -82,13 +82,21 @@ def main():
     
     # Extract auth code
     try:
+        # Try to parse as URL first
         parsed = urlparse(redirect_url)
         params = parse_qs(parsed.query)
         auth_code = params.get('auth_code', [None])[0]
         
+        # If no auth_code in query params, check if input IS the auth code
+        if not auth_code and len(redirect_url) > 50 and '.' in redirect_url:
+            # Looks like a JWT token (format: xxx.yyy.zzz), treat it as auth code
+            auth_code = redirect_url
+            print(f"\n✅ Detected direct auth code input")
+        
         if not auth_code:
             print("❌ Could not find auth_code in URL")
             print("Make sure you copied the complete redirect URL")
+            print("Or paste just the auth code token directly")
             return 1
         
         print()

@@ -7,7 +7,6 @@ import json
 from typing import Optional, Dict, Tuple
 from datetime import datetime, timedelta
 from fyers_apiv3 import fyersModel
-from fyers_apiv3.FyersWebsocket import access_token
 import requests
 
 logger = logging.getLogger(__name__)
