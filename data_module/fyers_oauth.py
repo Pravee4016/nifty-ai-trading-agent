@@ -35,12 +35,20 @@ class FyersOAuthManager:
         self.access_token = os.getenv("FYERS_ACCESS_TOKEN")
         self.refresh_token = os.getenv("FYERS_REFRESH_TOKEN")
         
-        # Try Cloud Secret Manager if in production
-        if not self.refresh_token:
+        if self.access_token:
+            logger.info(f"📝 Loaded access token from environment (length: {len(self.access_token)})")
+        
+        if self.refresh_token:
+            logger.info(f"📝 Loaded refresh token from environment (length: {len(self.refresh_token)})")
+        else:
+            logger.info("⚠️ No refresh token in environment, trying Secret Manager...")
+            # Try Cloud Secret Manager if in production
             self.refresh_token = self._load_from_secret_manager("fyers-refresh-token")
         
         if self.refresh_token:
-            logger.info("✅ Loaded refresh token from storage")
+            logger.info("✅ Refresh token available for automatic token refresh")
+        else:
+            logger.warning("⚠️ No refresh token found - automatic refresh not available")
     
     def _load_from_secret_manager(self, secret_name: str) -> Optional[str]:
         """Load secret from Google Cloud Secret Manager."""
