@@ -164,7 +164,7 @@ class FyersOAuthManager:
     def refresh_access_token(self) -> Tuple[bool, str]:
         """
         Refresh the access token using the refresh token.
-        This is called automatically when the access token expires.
+        Uses Fyers V3 API endpoint: https://api-t1.fyers.in/api/v3/validate-refresh-token
         
         Returns:
             Tuple of (success: bool, message: str)
@@ -174,33 +174,40 @@ class FyersOAuthManager:
             return False, "No refresh token available"
         
         try:
-            session_model = fyersModel.SessionModel(
-                client_id=self.app_id,
-                secret_key=self.secret_key,
-                redirect_uri=self.redirect_uri,
-                response_type="code",
-                grant_type="refresh_token"
-            )
+            import hashlib
             
-            session_model.set_token(self.refresh_token)
-            response = session_model.generate_token()
+            # Fyers V3 requires appIdHash (SHA-256 of app_id:secret_key)
+            app_id_hash = hashlib.sha256(f"{self.app_id}:{self.secret_key}".encode()).hexdigest()
             
-            if response.get("code") == 200:
-                self.access_token = response.get("access_token")
+            # Fyers V3 refresh endpoint
+            url = "https://api-t1.fyers.in/api/v3/validate-refresh-token"
+            
+            payload = {
+                "grant_type": "refresh_token",
+                "appIdHash": app_id_hash,
+                "refresh_token": self.refresh_token,
+                "pin": ""  # PIN not required for refresh
+            }
+            
+            logger.info("🔄 Attempting to refresh Fyers access token...")
+            response = requests.post(url, json=payload)
+            response_data = response.json()
+            
+            if response_data.get("code") == 200:
+                self.access_token = response_data.get("access_token")
                 
-                # Update refresh token if a new one is provided
-                if response.get("refresh_token"):
-                    self.refresh_token = response.get("refresh_token")
-                    self._save_to_secret_manager("fyers-refresh-token", self.refresh_token)
+                # Fyers doesn't return new refresh token on refresh, same one is reused
+                # Refresh token expires after 15 days
                 
-                # Update expiry
+                # Update expiry (tokens valid for 24 hours)
                 self.token_expiry = datetime.now() + timedelta(hours=23, minutes=50)
                 
-                logger.info("✅ Access token refreshed successfully")
+                logger.info("✅ Access token refreshed successfully via Fyers API")
                 return True, "Token refreshed successfully"
             else:
-                error_msg = response.get("message", "Unknown error")
+                error_msg = response_data.get("message", "Unknown error")
                 logger.error(f"❌ Token refresh failed: {error_msg}")
+                logger.debug(f"Response: {response_data}")
                 return False, error_msg
                 
         except Exception as e:
@@ -215,13 +222,10 @@ class FyersOAuthManager:
         Returns:
             Valid access token or None if refresh failed
         """
-        # Check if we have an access token
+        # If no access token, try to refresh immediately
         if not self.access_token:
-            logger.warning("⚠️ No access token available")
-            
-            # Try to refresh if we have a refresh token
+            logger.info("⚠️ No access token available, attempting refresh...")
             if self.refresh_token:
-                logger.info("🔄 Attempting to refresh access token...")
                 success, message = self.refresh_access_token()
                 if success:
                     return self.access_token
@@ -232,12 +236,16 @@ class FyersOAuthManager:
                 logger.error("❌ No refresh token available - need to re-authorize")
                 return None
         
-        # Check if token is expired or about to expire (within 10 minutes)
-        if self.token_expiry and datetime.now() >= self.token_expiry - timedelta(minutes=10):
-            logger.info("🔄 Access token expired or expiring soon, refreshing...")
-            success, message = self.refresh_access_token()
-            if not success:
-                logger.warning(f"⚠️ Token refresh failed: {message}, using existing token")
+        # Check if token is expired or about to expire (conservative: within 1 hour)
+        # Note: We don't track expiry initially, so always try to refresh on first use
+        if self.token_expiry is None or datetime.now() >= self.token_expiry - timedelta(hours=1):
+            logger.info("🔄 Access token may be expired, attempting refresh...")
+            if self.refresh_token:
+                success, message = self.refresh_access_token()
+                if not success:
+                    logger.warning(f"⚠️ Token refresh failed: {message}, trying existing token")
+            else:
+                logger.warning("⚠️ No refresh token for auto-refresh")
         
         return self.access_token
     
