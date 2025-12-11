@@ -113,18 +113,38 @@ def main():
             print("=" * 60)
             print()
             print("✅ Access token obtained")
-            print("✅ Refresh token obtained and saved to Cloud Secret Manager")
+            print(f"📝 Access Token: {oauth_manager.access_token[:30]}...")
+            print()
+            
+            # Show refresh token so user can save it
+            if oauth_manager.refresh_token:
+                print("✅ Refresh token obtained")
+                print(f"📝 Refresh Token: {oauth_manager.refresh_token[:30]}...")
+                print()
+                print("⚠️  IMPORTANT: Save this refresh token!")
+                print("   Add to .env file:")
+                print(f'   FYERS_REFRESH_TOKEN={oauth_manager.refresh_token}')
+                print()
+            
+            try:
+                oauth_manager._save_to_secret_manager("fyers-refresh-token", oauth_manager.refresh_token)
+                print("✅ Refresh token saved to Cloud Secret Manager")
+            except Exception as e:
+                print(f"⚠️  Could not save to Secret Manager: {str(e)[:100]}")
+                print("   (This is OK - you can add it manually to .env)")
+            
             print()
             print("Your system will now automatically:")
-            print("  - Refresh access tokens before expiry")
-            print("  - Never require manual token updates")
+            print("  - Refresh access tokens before expiry (using refresh token)")
+            print("  - Never require manual token updates for 15 days")
             print("  - Persist across deployments")
             print()
             print("=" * 60)
             print("Next Steps:")
-            print("  1. The refresh token is already in Cloud Secret Manager")
-            print("  2. Redeploy your application: ./deploy_job.sh")
-            print("  3. Tokens will auto-refresh indefinitely!")
+            print("  1. Copy the FYERS_REFRESH_TOKEN line above")
+            print("  2. Add it to your .env file")
+            print("  3. Redeploy your application: ./deploy_job.sh")
+            print("  4. Tokens will auto-refresh for 15 days!")
             print("=" * 60)
             
             # Optionally update .env with new access token
