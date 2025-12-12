@@ -65,16 +65,18 @@ class TelegramBot:
 
         url = f"{self.base_url}/sendMessage"
         
-        # List of targets
-        targets = [self.chat_id]
+        # List of targets with labels for better logging
+        targets = [(self.chat_id, "chat")]
         if self.channel_id:
-            targets.append(self.channel_id)
+            targets.append((self.channel_id, "channel"))
         
         success_count = 0
+        failed_targets = []
         
-        for target_id in targets:
+        for target_id, target_type in targets:
             retries = 3
             backoff = 2
+            last_error = None
             
             while retries > 0:
                 try:
@@ -90,7 +92,7 @@ class TelegramBot:
                     # Handle Rate Limiting (429) explicitly
                     if response.status_code == 429:
                         retry_after = int(response.json().get("parameters", {}).get("retry_after", backoff))
-                        logger.warning(f"⏳ Rate limited by Telegram. Retrying after {retry_after}s...")
+                        logger.warning(f"⏳ Rate limited by Telegram ({target_type}). Retrying after {retry_after}s...")
                         time.sleep(retry_after)
                         retries -= 1
                         continue
@@ -101,22 +103,35 @@ class TelegramBot:
                     if data.get("ok"):
                         msg_id = data["result"]["message_id"]
                         success_count += 1
-                        logger.info(f"✅ Telegram message sent to {target_id} | ID: {msg_id}")
+                        logger.info(f"✅ Telegram message sent to {target_type} ({target_id}) | ID: {msg_id}")
                         break # Success, move to next target
                     else:
-                        logger.error(f"❌ Failed to send to {target_id}: {data.get('description', 'Unknown')}")
+                        error_desc = data.get('description', 'Unknown')
+                        last_error = f"{target_type}: {error_desc}"
+                        logger.error(f"❌ Failed to send to {target_type} ({target_id}): {error_desc}")
+                        failed_targets.append(last_error)
                         break # Logic error, don't retry
 
                 except requests.exceptions.RequestException as e:
-                    logger.error(f"❌ Telegram send failed (Attempt {4-retries}/3): {str(e)}")
+                    last_error = f"{target_type}: {str(e)}"
+                    logger.error(f"❌ Telegram send to {target_type} failed (Attempt {4-retries}/3): {str(e)}")
                     retries -= 1
-                    time.sleep(backoff)
-                    backoff *= 2  # Exponential backoff for network errors
+                    if retries > 0:
+                        time.sleep(backoff)
+                        backoff *= 2  # Exponential backoff for network errors
+                    else:
+                        # All retries exhausted
+                        failed_targets.append(last_error)
         
         if success_count > 0:
             self.message_count += 1
+            if failed_targets:
+                logger.warning(f"⚠️ Partial success: {success_count}/{len(targets)} targets succeeded. Failed: {', '.join(failed_targets)}")
             return True
-        return False
+        else:
+            # All targets failed
+            logger.error(f"❌ All Telegram targets failed. Errors: {', '.join(failed_targets) if failed_targets else 'Unknown'}")
+            return False
 
     # =====================================================================
     # SIGNAL ALERTS
