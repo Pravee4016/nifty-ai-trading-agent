@@ -23,6 +23,7 @@ TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID") # Optional Channel ID
 # FYERS CONFIGURATION
 # ============================================================================
 FYERS_CLIENT_ID = os.getenv("FYERS_CLIENT_ID", "DURQKS8D17-100") # Default from codebase
+FYERS_SECRET_ID = os.getenv("FYERS_SECRET_ID")  # For OAuth refresh token support
 FYERS_ACCESS_TOKEN = os.getenv("FYERS_ACCESS_TOKEN")
 
 
@@ -52,7 +53,7 @@ INSTRUMENTS = {
         "display_name": "Bank Nifty",
         "tick_size": 0.05,  # Legacy - use get_tick_size() instead
         "lot_size": 15,
-        "active": False,
+        "active": True,
     },
     "FINNIFTY": {
         "symbol": "FINNIFTY",
@@ -138,7 +139,7 @@ VOLUME_PERIOD = 20  # candles lookback
 # Breakout Configuration
 BREAKOUT_CONFIRMATION_CANDLES = 2
 FALSE_BREAKOUT_RETRACEMENT = float(os.getenv("MAX_FALSE_BREAKOUT_PERCENT", 0.5))
-RETEST_ZONE_PERCENT = float(os.getenv("RETEST_ZONE_PERCENT", 0.3))
+RETEST_ZONE_PERCENT = float(os.getenv("RETEST_ZONE_PERCENT", 0.15))
 
 # Support/Resistance Configuration
 SR_CLUSTER_TOLERANCE = 0.1  # 0.1% difference = same cluster
@@ -146,7 +147,7 @@ MIN_SR_TOUCHES = 2
 LOOKBACK_BARS = 2000  # Increased to use full 5-day history (was 100)
 
 # Momentum Configuration
-MIN_RSI_BULLISH = int(os.getenv("MIN_MOMENTUM_RSI", 60))
+MIN_RSI_BULLISH = int(os.getenv("MIN_MOMENTUM_RSI", 50))  # Lowered from 60 to catch early trends
 MAX_RSI_BEARISH = int(os.getenv("MAX_MOMENTUM_RSI", 40))
 RSI_PERIOD = 14
 
@@ -181,6 +182,11 @@ STOCH_SMOOTH_D = 3
 MIN_RISK_REWARD_RATIO = 1.5
 MAX_DAILY_TRADES = 999  # Effectively unlimited (rely on robust filtering)
 MIN_SIGNAL_CONFIDENCE = int(os.getenv("MIN_SIGNAL_CONFIDENCE", 65))
+MIN_SCORE_THRESHOLD = int(os.getenv("MIN_SCORE_THRESHOLD", 65))  # Raised from 60 for expert-level quality
+
+# Feature Flag: Expert Analysis Enhancements
+# Set to False to rollback to previous scoring without code changes
+USE_EXPERT_ENHANCEMENTS = os.getenv("USE_EXPERT_ENHANCEMENTS", "True").lower() == "true"
 
 DEFAULT_POSITION_SIZE = 1
 MAX_POSITION_SIZE = 3
@@ -196,6 +202,41 @@ GROQ_TEMPERATURE = float(os.getenv("GROQ_TEMPERATURE", 0.3))
 # Approximate token budget (for your own tracking; not enforced by API)
 GROQ_REQUESTS_PER_DAY = 30000
 GROQ_REQUESTS_PER_MINUTE = 300
+
+# ============================================================================
+# VERTEX AI CONFIGURATION (Gemini)
+# ============================================================================
+
+# AI Provider Selection: GROQ, VERTEX, or HYBRID (A/B testing)
+AI_PROVIDER = os.getenv("AI_PROVIDER", "GROQ")  # Options: GROQ, VERTEX, HYBRID
+
+# Vertex AI Settings
+VERTEX_PROJECT_ID = os.getenv("VERTEX_PROJECT_ID", os.getenv("GOOGLE_CLOUD_PROJECT", "nifty-trading-agent"))
+VERTEX_LOCATION = os.getenv("VERTEX_LOCATION", "us-central1")
+VERTEX_MODEL = os.getenv("VERTEX_MODEL", "gemini-2.0-flash-exp")
+
+# Hybrid Mode Configuration (when AI_PROVIDER=HYBRID)
+HYBRID_GROQ_WEIGHT = float(os.getenv("HYBRID_GROQ_WEIGHT", 0.5))    # 50% to Groq
+HYBRID_VERTEX_WEIGHT = float(os.getenv("HYBRID_VERTEX_WEIGHT", 0.5))  # 50% to Vertex
+
+# ============================================================================
+# MACHINE LEARNING CONFIGURATION
+# ============================================================================
+
+# Enable/Disable ML Filtering
+USE_ML_FILTERING = os.getenv("USE_ML_FILTERING", "False").lower() == "true"
+
+# Google Cloud Storage for Models
+ML_MODEL_BUCKET = os.getenv("ML_MODEL_BUCKET", "nifty-trading-agent-ml-models")
+ML_MODEL_NAME = os.getenv("ML_MODEL_NAME", "signal_quality_v1.txt")
+
+# ML Prediction Thresholds
+ML_CONFIDENCE_THRESHOLD = float(os.getenv("ML_CONFIDENCE_THRESHOLD", 0.65))  # Min probability to accept signal
+ML_FALLBACK_TO_RULES = bool(os.getenv("ML_FALLBACK_TO_RULES", "True"))  # Use rule-based if ML unavailable
+
+# Retraining Configuration  
+ML_RETRAIN_FREQUENCY_DAYS = int(os.getenv("ML_RETRAIN_FREQUENCY", 7))  # Weekly
+ML_MIN_TRAINING_SAMPLES = int(os.getenv("ML_MIN_TRAINING_SAMPLES", 100))  # Minimum trades to train
 
 # ============================================================================
 # TELEGRAM CONFIGURATION

@@ -91,6 +91,17 @@ class TechnicalLevels:
     pdl: float
     atr: float
     volatility_score: float
+    rsi_divergence: str = "NONE"
+    bb_upper: float = 0.0
+    bb_lower: float = 0.0
+    ema_50: float = 0.0
+    # Fibonacci Pivot Levels
+    r1_fib: float = 0.0
+    s1_fib: float = 0.0
+    r2_fib: float = 0.0
+    s2_fib: float = 0.0
+    # Confluence zones
+    confluence_zones: List[Dict] = None
 
 
 class TechnicalAnalyzer:
@@ -184,7 +195,25 @@ class TechnicalAnalyzer:
             if pdh: resistance_levels.append(pdh)
             if pdl: support_levels.append(pdl)
             
-            pivots = self._calculate_pivots(df_sub)
+            # Calculate daily pivots from PDH/PDL/PDC
+            pivots = {}
+            if pdh and pdl:
+                try:
+                    # In a real setup, calculate_pdh_pdl should also return pdc
+                    # Using resample to find previous day close
+                    daily_data = df.resample("D").agg({"close": "last"}).dropna()
+                    if len(daily_data) >= 2:
+                        pdc = daily_data.iloc[-2]["close"]
+                        pivots = self._calculate_pivots(pdh, pdl, pdc)
+                        
+                        # Add Fibonacci Pivots to structured levels
+                        if "s1_fib" in pivots: support_levels.append(pivots["s1_fib"])
+                        if "r1_fib" in pivots: resistance_levels.append(pivots["r1_fib"])
+                        if "s2_fib" in pivots: support_levels.append(pivots["s2_fib"])
+                        if "r2_fib" in pivots: resistance_levels.append(pivots["r2_fib"])
+                except Exception as e:
+                    logger.warning(f"⚠️ Pivot PDC fallback: {e}")
+            
             pivot_std = pivots.get("pivot", 0.0)
 
             atr = self._calculate_atr(df_sub)
@@ -214,6 +243,10 @@ class TechnicalAnalyzer:
                 pdl=pdl or 0.0,
                 atr=atr,
                 volatility_score=volatility_score,
+                r1_fib=pivots.get("r1_fib", 0.0),
+                s1_fib=pivots.get("s1_fib", 0.0),
+                r2_fib=pivots.get("r2_fib", 0.0),
+                s2_fib=pivots.get("s2_fib", 0.0),
             )
 
         except Exception as e:
@@ -373,30 +406,140 @@ class TechnicalAnalyzer:
         return t1, t2, t3
 
     def _calculate_pivots(
-        self, df: pd.DataFrame
+        self, high: float, low: float, close: float
     ) -> Dict[str, float]:
-        """Calculate pivot points (Standard & simple Fibonacci-style)."""
+        """
+        Calculate pivot points (Standard & Fibonacci-style).
+        Calculated from Previous Day High, Low, and Close.
+        """
         try:
-            high = df["high"].iloc[-1]
-            low = df["low"].iloc[-1]
-            close = df["close"].iloc[-1]
-
             pivot = (high + low + close) / 3
-            r1 = (2 * pivot) - low
-            s1 = (2 * pivot) - high
-            r2 = pivot + (high - low)
-            s2 = pivot - (high - low)
+            range_diff = high - low
+
+            # Standard Pivots
+            r1_std = (2 * pivot) - low
+            s1_std = (2 * pivot) - high
+            r2_std = pivot + range_diff
+            s2_std = pivot - range_diff
+
+            # Fibonacci Pivots (Commonly used by professionals)
+            r1_fib = pivot + (0.382 * range_diff)
+            s1_fib = pivot - (0.382 * range_diff)
+            r2_fib = pivot + (0.618 * range_diff)
+            s2_fib = pivot - (0.618 * range_diff)
+            r3_fib = pivot + (1.000 * range_diff)
+            s3_fib = pivot - (1.000 * range_diff)
 
             return {
                 "pivot": pivot,
-                "r1": r1,
-                "s1": s1,
-                "r2": r2,
-                "s2": s2,
+                "r1": r1_std,
+                "s1": s1_std,
+                "r2": r2_std,
+                "s2": s2_std,
+                "r1_fib": r1_fib,
+                "s1_fib": s1_fib,
+                "r2_fib": r2_fib,
+                "s2_fib": s2_fib,
+                "r3_fib": r3_fib,
+                "s3_fib": s3_fib
             }
         except Exception as e:
             logger.error(f"Error calculating pivots: {e}")
             return {}
+
+    def _calculate_bollinger_bands(self, df: pd.DataFrame, period: int = 20, std_dev: int = 2) -> Dict[str, pd.Series]:
+        """Calculate Bollinger Bands (Upper, Middle, Lower)."""
+        try:
+            middle = df['close'].rolling(window=period).mean()
+            std = df['close'].rolling(window=period).std()
+            upper = middle + (std_dev * std)
+            lower = middle - (std_dev * std)
+            
+            return {
+                "upper": upper,
+                "middle": middle,
+                "lower": lower
+            }
+        except Exception as e:
+            logger.error(f"Error calculating Bollinger Bands: {e}")
+            return {}
+
+    def _detect_rsi_divergence(self, df: pd.DataFrame, lookback: int = 10) -> str:
+        """
+        Detect Bullish or Bearish RSI Divergence over the last 'lookback' candles.
+        
+        Returns: 'BULLISH', 'BEARISH', or 'NONE'
+        """
+        try:
+            if len(df) < lookback + 5 or "rsi" not in df.columns:
+                return "NONE"
+            
+            recent = df.tail(lookback)
+            
+            # Find recent price pivots
+            price_highs = df['high'].rolling(3, center=True).apply(lambda x: x[1] == max(x), raw=True).astype(bool)
+            price_lows = df['low'].rolling(3, center=True).apply(lambda x: x[1] == min(x), raw=True).astype(bool)
+            
+            # BEARISH DIVERGENCE: Price Higher High, RSI Lower High
+            # Check for two recent high peaks
+            high_indices = df[price_highs].index[-2:] if any(price_highs) else []
+            if len(high_indices) == 2:
+                p1, p2 = high_indices
+                if df.loc[p2, 'high'] >= df.loc[p1, 'high'] and df.loc[p2, 'rsi'] < df.loc[p1, 'rsi']:
+                    return "BEARISH"
+                # Variation: Price tests same resistance but RSI is lower (as in expert report)
+                if abs(df.loc[p2, 'high'] - df.loc[p1, 'high']) < (df.loc[p1, 'high'] * 0.0005) and df.loc[p2, 'rsi'] < df.loc[p1, 'rsi'] - 2:
+                    return "BEARISH"
+
+            # BULLISH DIVERGENCE: Price Lower Low, RSI Higher Low
+            low_indices = df[price_lows].index[-2:] if any(price_lows) else []
+            if len(low_indices) == 2:
+                l1, l2 = low_indices
+                if df.loc[l2, 'low'] <= df.loc[l1, 'low'] and df.loc[l2, 'rsi'] > df.loc[l1, 'rsi']:
+                    return "BULLISH"
+                    
+            return "NONE"
+        except Exception as e:
+            logger.error(f"Error detecting RSI divergence: {e}")
+            return "NONE"
+
+    def validate_level_interaction(
+        self,
+        price: float,
+        level: float,
+        direction: str,
+        tolerance: float = 3.0  # ±3 points for Nifty at ~25,000
+    ) -> tuple[bool, float]:
+        """
+        Check if price is interacting with level precisely (within ±tolerance).
+        
+        Expert's methodology: Only enter when price is within ±3 points of key level.
+        
+        Args:
+            price: Current price
+            level: Key level to check (PDH, S1, R1, etc.)
+            direction: "SHORT" or "LONG"
+            tolerance: Maximum distance in points (default 3.0)
+            
+        Returns:
+            (is_valid, distance) - True if price is within tolerance, actual distance
+        """
+        distance = abs(price - level)
+        
+        # Check if within tolerance
+        if distance > tolerance:
+            return False, distance
+            
+        # For SHORT: price should be near or above level (testing resistance)
+        # For LONG: price should be near or below level (testing support)
+        if direction == "SHORT":
+            # Allow entry from 0-3 points above resistance
+            is_valid = price >= level - tolerance and price <= level + tolerance
+        else:
+            # Allow entry from 0-3 points below support
+            is_valid = price >= level - tolerance and price <= level + tolerance
+            
+        return is_valid, distance
 
     def calculate_fibonacci_levels(self, df: pd.DataFrame, lookback: int = 50) -> Dict[str, float]:
         """
@@ -539,13 +682,13 @@ class TechnicalAnalyzer:
 
     def get_opening_range(self, df: pd.DataFrame, duration_mins: int = 15) -> Optional[Dict]:
         """
-        Calculate opening range (first N minutes of trading session).
+        Calculate opening range (first N-minute candle of trading session).
         
         ORB is one of the most reliable intraday setups for Nifty/BankNifty.
         Breakouts of the opening range tend to continue in that direction.
         
         Args:
-            df: 5-minute OHLC data with datetime index
+            df: Intraday OHLC data with datetime index (5m, 15m, or 30m)
             duration_mins: 15 or 30 minutes (default 15)
         
         Returns:
@@ -553,21 +696,44 @@ class TechnicalAnalyzer:
         """
         try:
             # Market opens at 9:15 AM IST
-            if duration_mins == 15:
-                end_time = "09:30"
-            elif duration_mins == 30:
-                end_time = "09:45"
-            else:
-                end_time = "09:30"
+            # We want the FIRST candle of the specified duration, not all candles in the range
             
-            # Filter to opening range
-            opening_candles = df.between_time("09:15", end_time)
+            # For 15m candle: Take the candle at 09:15 (covers 09:15-09:30)
+            # For 30m candle: Take candles from 09:15-09:45
             
-            if opening_candles.empty or len(opening_candles) < 2:
+            # Filter to get candles for the LATEST day in the dataset only
+            # This prevents picking the opening candle from 5 days ago in a 5d dataset
+            latest_date = df.index.max().date()
+            df_today = df[df.index.date == latest_date]
+            
+            market_open_candles = df_today[df_today.index.time >= time(9, 15)]
+            
+            if market_open_candles.empty:
+                logger.debug(f"⏭️ No data from market open time (09:15) on {latest_date}")
                 return None
             
-            orb_high = opening_candles["high"].max()
-            orb_low = opening_candles["low"].min()
+            # Get the first candle(s) based on duration
+            if duration_mins == 15:
+                # For 15m: Just take the first candle (09:15-09:30)
+                opening_candles = market_open_candles.iloc[:1]
+            elif duration_mins == 30:
+                # For 30m: Take first 2 candles if using 15m data, or first candle if using 30m data
+                # We can detect interval from index
+                if len(market_open_candles) >= 2:
+                    diff = (market_open_candles.index[1] - market_open_candles.index[0]).total_seconds() / 60
+                    num_candles = duration_mins // int(diff) if diff > 0 else 1
+                else:
+                    num_candles = 1
+                opening_candles = market_open_candles.iloc[:num_candles]
+            else:
+                # Default to 15m
+                opening_candles = market_open_candles.iloc[:1]
+            
+            if opening_candles.empty:
+                return None
+            
+            orb_high = float(opening_candles["high"].max())
+            orb_low = float(opening_candles["low"].min())
             orb_range = orb_high - orb_low
             
             logger.info(
@@ -590,7 +756,13 @@ class TechnicalAnalyzer:
     # HIGHER TF CONTEXT (15m)
     # =====================================================================
 
-    def get_higher_tf_context(self, df_15m: pd.DataFrame, df_5m: pd.DataFrame = None, df_daily: pd.DataFrame = None) -> Dict:
+    def get_higher_tf_context(
+        self,
+        df_15m: pd.DataFrame,
+        df_5m: pd.DataFrame = None,
+        df_daily: pd.DataFrame = None,
+        india_vix: float = None,
+    ) -> Dict:
         """
         Build higher timeframe context:
         - 15m Trend direction: UP / DOWN / FLAT
@@ -654,7 +826,7 @@ class TechnicalAnalyzer:
                 trend = "UP"  # Early reversal
                 logger.info(f"🔄 Early trend reversal detected (Price > 15m EMA20 & RSI {rsi_15:.1f})")
             
-            elif trend == "UP" and current_close < ema_20_15m and rsi_15 < 45:
+            elif trend == "UP" and current_close < ema_20_15m and rsi_15 < 30:  # More conservative (was 45)
                 trend = "DOWN" # Early correction
                 logger.info(f"🔄 Early trend correction detected (Price < 15m EMA20 & RSI {rsi_15:.1f})")
 
@@ -664,6 +836,8 @@ class TechnicalAnalyzer:
                     "ema_short_15": ema_short_15,
                     "ema_long_15": ema_long_15,
                     "rsi_15": rsi_15,
+                    "ema_50_15m": float(df["close"].ewm(span=50, adjust=False).mean().iloc[-1]),
+                    "rsi_divergence_15m": self._detect_rsi_divergence(df, lookback=15),
                 }
             )
 
@@ -679,6 +853,17 @@ class TechnicalAnalyzer:
                 # Calculate 20 EMA on 5m
                 ema_20 = df_5m_copy["close"].ewm(span=20, adjust=False).mean()
                 ema_20_5m = float(ema_20.iloc[-1])
+                ema_50_5m = float(df_5m_copy["close"].ewm(span=50, adjust=False).mean().iloc[-1])
+                
+                # Bollinger Bands
+                bb = self._calculate_bollinger_bands(df_5m_copy)
+                bb_upper = float(bb["upper"].iloc[-1])
+                bb_lower = float(bb["lower"].iloc[-1])
+
+                # RSI Divergence on 5m
+                rsi_5m_series = self._calculate_rsi_series(df_5m_copy)
+                df_5m_copy["rsi"] = rsi_5m_series
+                rsi_div_5m = self._detect_rsi_divergence(df_5m_copy)
                 
                 # Current price vs VWAP and EMA
                 current_price = float(df_5m_copy["close"].iloc[-1])
@@ -689,6 +874,10 @@ class TechnicalAnalyzer:
                     "vwap_5m": vwap_5m,
                     "vwap_slope": vwap_slope,
                     "ema_20_5m": ema_20_5m,
+                    "ema_50_5m": ema_50_5m,
+                    "bb_upper_5m": bb_upper,
+                    "bb_lower_5m": bb_lower,
+                    "rsi_divergence_5m": rsi_div_5m,
                     "price_above_vwap": price_above_vwap,
                     "price_above_ema20": price_above_ema20,
                 })
@@ -696,29 +885,38 @@ class TechnicalAnalyzer:
             # ====================
             # Adaptive RSI Thresholds (Phase 2 + Phase 3)
             # ====================
-            # Calculate ATR percentile and get dynamic RSI thresholds
-            # Phase 3: Now uses VIX if available, falls back to ATR percentile
-            if "atr" in df_5m_copy.columns and len(df_5m_copy) >= 60:
-                current_atr = float(df_5m_copy["atr"].iloc[-1])
-                atr_percentile = AdaptiveThresholds.calculate_atr_percentile(
-                    df_5m_copy, current_atr, lookback=60
-                )
+            # Ensure df_5m_copy is available even if 20-EMA block was skipped
+            if df_5m is not None and not df_5m.empty:
+                df_5m_copy = df_5m.copy().sort_index()
                 
-                # NEW: Get VIX from context (passed from agent)
-                india_vix = context.get("india_vix")
-                
-                # Use VIX if available, otherwise ATR percentile
-                rsi_long_threshold, rsi_short_threshold = AdaptiveThresholds.get_rsi_thresholds(
-                    vix=india_vix,  # Will use this if not None
-                    atr_percentile=atr_percentile  # Fallback
-                )
-                
-                context.update({
-                    "atr_percentile": atr_percentile,
-                    "india_vix": india_vix,  # Store for reference
-                    "rsi_long_threshold": rsi_long_threshold,
-                    "rsi_short_threshold": rsi_short_threshold,
-                })
+                # Ensure ATR is calculated (needed for adaptive thresholds)
+                if "atr" not in df_5m_copy.columns:
+                    high_low = df_5m_copy["high"] - df_5m_copy["low"]
+                    high_close = (df_5m_copy["high"] - df_5m_copy["close"].shift()).abs()
+                    low_close = (df_5m_copy["low"] - df_5m_copy["close"].shift()).abs()
+                    ranges = pd.concat([high_low, high_close, low_close], axis=1)
+                    df_5m_copy["atr"] = ranges.max(axis=1).rolling(14).mean()
+
+                # Calculate ATR percentile and get dynamic RSI thresholds
+                if "atr" in df_5m_copy.columns and len(df_5m_copy) >= 60:
+                    current_atr = float(df_5m_copy["atr"].iloc[-1])
+                    atr_percentile = AdaptiveThresholds.calculate_atr_percentile(
+                        df_5m_copy, current_atr, lookback=60
+                    )
+                    
+                    # NEW: Use the india_vix passed as argument
+                    # Use VIX if available, otherwise ATR percentile
+                    rsi_long_threshold, rsi_short_threshold = AdaptiveThresholds.get_rsi_thresholds(
+                        vix=india_vix,  # Will use this if not None
+                        atr_percentile=atr_percentile  # Fallback
+                    )
+                    
+                    context.update({
+                        "atr_percentile": atr_percentile,
+                        "india_vix": india_vix,  # Store for reference
+                        "rsi_long_threshold": rsi_long_threshold,
+                        "rsi_short_threshold": rsi_short_threshold,
+                    })
                 
                 # Enhanced logging with VIX info
                 if india_vix:
@@ -1054,7 +1252,14 @@ class TechnicalAnalyzer:
                         # EXCEPTION: ORB and PDH breaks don't always need consolidation
                         is_major_level = (breakout_type == "ORB") or (abs(breakout_level - support_resistance.pdh) < 1.0)
                         
-                        if not is_consolidating and not has_surge and not is_major_level:
+                        # NEW: For indices, relax consolidation requirement if strong trend
+                        is_index = "NIFTY" in self.instrument.upper() or "INDEX" in self.instrument.upper()
+                        strong_trend = (trend_dir == "UP" and rsi_15 >= 50)
+                        
+                        if is_index and strong_trend:
+                            # Allow signals in strong trends even without consolidation
+                            logger.info(f"✅ Index strong trend override (RSI {rsi_15:.1f}) - Consolidation not required")
+                        elif not is_consolidating and not has_surge and not is_major_level:
                             logger.info(
                                 f"⏭️ Bullish breakout ignored (No consolidation/surge) | "
                                 f"Vol: {surge_ratio:.1f}x"
@@ -1062,17 +1267,23 @@ class TechnicalAnalyzer:
                             return None
                         
                         # NEW: RVOL Filter (Relative Volume check)
-                        rvol, rvol_desc = self._calculate_rvol(df)
-                        MIN_RVOL_BREAKOUT = 1.5  # Require 1.5x relative volume for breakouts
+                        # Skip RVOL check for indices (they have no volume data)
+                        is_index = "NIFTY" in self.instrument.upper() or "INDEX" in self.instrument.upper()
                         
-                        if rvol < MIN_RVOL_BREAKOUT and not is_major_level:
-                            logger.info(
-                                f"⏭️ Bullish breakout ignored (Low RVOL) | "
-                                f"{rvol_desc} < {MIN_RVOL_BREAKOUT}x required"
-                            )
-                            return None
-                        
-                        logger.info(f"✅ RVOL check passed | {rvol_desc}")
+                        if not is_index:
+                            rvol, rvol_desc = self._calculate_rvol(df)
+                            MIN_RVOL_BREAKOUT = 1.5  # Require 1.5x relative volume for breakouts
+                            
+                            if rvol < MIN_RVOL_BREAKOUT and not is_major_level:
+                                logger.info(
+                                    f"⏭️ Bullish breakout ignored (Low RVOL) | "
+                                    f"{rvol_desc} < {MIN_RVOL_BREAKOUT}x required"
+                                )
+                                return None
+                            
+                            logger.info(f"✅ RVOL check passed | {rvol_desc}")
+                        else:
+                            logger.debug(f"⏭️ RVOL check skipped (index instrument)")
                             
                         # Filter: MTF Trend Alignment
                         # Use ADAPTIVE RSI thresholds from context (fallback to static)
@@ -1155,7 +1366,7 @@ class TechnicalAnalyzer:
                                 description=(
                                     f"Bullish breakout at {breakout_level:.2f} | "
                                     f"RR: {risk_reward:.2f} | "
-                                    f"Vol Surge: {has_surge} | Consolidation: {is_consolidating}"
+                                    f"Consolidation: {is_consolidating}"
                                     f"{' | ORB Breakout' if is_orb_breakout and orb_direction == 'BULLISH' else ''}"
                                 ),
                                 debug_info={
@@ -1206,8 +1417,14 @@ class TechnicalAnalyzer:
                 # Exception: Major Levels (ORB/PDL)
                 is_major_level = (breakdown_type == "ORB") or (support_resistance.pdl > 0 and abs(breakdown_level - support_resistance.pdl) < 1.0)
 
-                # Filter: Must be consolidating OR have massive volume surge
-                if not is_consolidating and not has_surge and not is_major_level:
+                # NEW: For indices, relax consolidation requirement if strong trend
+                is_index = "NIFTY" in self.instrument.upper() or "INDEX" in self.instrument.upper()
+                strong_trend = (trend_dir == "DOWN" and rsi_15 <= 50)
+                
+                if is_index and strong_trend:
+                    # Allow signals in strong trends even without consolidation
+                    logger.info(f"✅ Index strong trend override (RSI {rsi_15:.1f}) - Consolidation not required")
+                elif not is_consolidating and not has_surge and not is_major_level:
                     logger.info(
                         f"⏭️ Bearish breakdown ignored (No consolidation/surge) | "
                         f"Vol: {surge_ratio:.1f}x"
@@ -1215,17 +1432,23 @@ class TechnicalAnalyzer:
                     return None
             
                 # NEW: RVOL Filter (Relative Volume check)
-                rvol, rvol_desc = self._calculate_rvol(df)
-                MIN_RVOL_BREAKOUT = 1.5  # Require 1.5x relative volume
+                # Skip RVOL check for indices (they have no volume data)
+                is_index = "NIFTY" in self.instrument.upper() or "INDEX" in self.instrument.upper()
                 
-                if rvol < MIN_RVOL_BREAKOUT and not is_major_level:
-                    logger.info(
-                        f"⏭️ Bearish breakdown ignored (Low RVOL) | "
-                        f"{rvol_desc} < {MIN_RVOL_BREAKOUT}x required"
-                    )
-                    return None
-                
-                logger.info(f"✅ RVOL check passed | {rvol_desc}")
+                if not is_index:
+                    rvol, rvol_desc = self._calculate_rvol(df)
+                    MIN_RVOL_BREAKOUT = 1.5  # Require 1.5x relative volume
+                    
+                    if rvol < MIN_RVOL_BREAKOUT and not is_major_level:
+                        logger.info(
+                            f"⏭️ Bearish breakdown ignored (Low RVOL) | "
+                            f"{rvol_desc} < {MIN_RVOL_BREAKOUT}x required"
+                        )
+                        return None
+                    
+                    logger.info(f"✅ RVOL check passed | {rvol_desc}")
+                else:
+                    logger.debug(f"⏭️ RVOL check skipped (index instrument)")
                  # Filter: MTF Alignment
                 # Use ADAPTIVE RSI thresholds from context (fallback to static)
                 rsi_short_threshold = higher_tf_context.get("rsi_short_threshold", MAX_RSI_BEARISH)
@@ -1309,7 +1532,7 @@ class TechnicalAnalyzer:
                         description=(
                             f"Bearish breakdown at {breakdown_level:.2f} | "
                             f"RR: {risk_reward:.2f} | "
-                            f"Vol Surge: {has_surge} | Consolidation: {is_consolidating}"
+                            f"Consolidation: {is_consolidating}"
                             f"{' | ORB Breakout' if is_orb_breakout and orb_direction == 'BEARISH' else ''}"
                         ),
                         atr=atr,
@@ -1597,7 +1820,7 @@ class TechnicalAnalyzer:
                     logger.info(
                         f"🎯 RETEST SETUP | {description} | "
                         f"Price: {current_price:.2f} | Level: {level:.2f} | "
-                        f"Dist: {distance_pct:.3f}%"
+                        f"Dist: {abs(current_price - level):.2f} pts ({distance_pct:.3f}%)"
                     )
 
                     # NEW: Validate bounce structure
@@ -2163,6 +2386,18 @@ class TechnicalAnalyzer:
         except Exception:
             return 50.0
 
+    def _calculate_rsi_series(self, df: pd.DataFrame, period: int = RSI_PERIOD) -> pd.Series:
+        """Calculate full RSI series."""
+        try:
+            delta = df["close"].diff()
+            gain = delta.where(delta > 0, 0.0).rolling(period).mean()
+            loss = -delta.where(delta < 0, 0.0).rolling(period).mean()
+            rs = gain / loss
+            rsi = 100.0 - (100.0 / (1.0 + rs))
+            return rsi.fillna(50.0)
+        except Exception:
+            return pd.Series(50.0, index=df.index)
+
     def _calculate_atr(
         self, df: pd.DataFrame, period: int = ATR_PERIOD
     ) -> float:
@@ -2330,7 +2565,7 @@ class TechnicalAnalyzer:
                 
                 for level in support_resistance.support_levels[:3]:
                     distance_pct = abs(current_low - level) / level * 100
-                    if distance_pct <= 0.5:  # Within 0.5% of support
+                    if distance_pct <= RETEST_ZONE_PERCENT:  # Use global setting (0.15% = ~35-40 pts for Nifty)
                         at_support = True
                         support_level = level
                         break
@@ -2338,7 +2573,7 @@ class TechnicalAnalyzer:
                 # Also check if near PDL
                 if not at_support and support_resistance.pdl > 0:
                     distance_pct = abs(current_low - support_resistance.pdl) / support_resistance.pdl * 100
-                    if distance_pct <= 0.5:
+                    if distance_pct <= RETEST_ZONE_PERCENT:
                         at_support = True
                         support_level = support_resistance.pdl
 
@@ -2379,7 +2614,10 @@ class TechnicalAnalyzer:
                         entry_price = current_close
                         stop_loss = current_low - (atr * 0.5)
                         
-                        # Target: Next resistance or PDH
+                        # Calculate risk first
+                        risk = abs(entry_price - stop_loss)
+                        
+                        # Target: Next resistance or PDH, but cap at 3x risk (realistic for intraday)
                         target = None
                         for r in support_resistance.resistance_levels:
                             if r > current_price:
@@ -2390,9 +2628,14 @@ class TechnicalAnalyzer:
                             target = support_resistance.pdh
                         
                         if not target:
-                            target = current_price + (atr * 3.0)
+                            target = current_price + (risk * 3.0)  # Default: 3x risk
+                        else:
+                            # Cap target at 3x risk to prevent unrealistic R:R
+                            max_target = entry_price + (risk * 3.0)
+                            if target > max_target:
+                                logger.info(f"📉 Target capped from {target:.2f} to {max_target:.2f} (3x risk)")
+                                target = max_target
                         
-                        risk = abs(entry_price - stop_loss)
                         reward = abs(target - entry_price)
                         rr = reward / risk if risk > 0 else 0
                         
@@ -2424,7 +2667,7 @@ class TechnicalAnalyzer:
                             risk_reward_ratio=rr,
                             timestamp=pd.Timestamp.now(),
                             description=(
-                                f"Bullish pin bar at {support_level:.2f} | {setup_reason} | "
+                                f"Bullish pin bar (Entry: {entry_price:.2f}, Near Support: {support_level:.2f}) | {setup_reason} | "
                                 f"Lower wick: {lower_wick_pct*100:.0f}% | RR: {rr:.1f}"
                             ),
                             debug_info={
@@ -2445,7 +2688,7 @@ class TechnicalAnalyzer:
                 
                 for level in support_resistance.resistance_levels[:3]:
                     distance_pct = abs(current_high - level) / level * 100
-                    if distance_pct <= 0.5:  # Within 0.5% of resistance
+                    if distance_pct <= RETEST_ZONE_PERCENT:  # Within 0.5% of resistance
                         at_resistance = True
                         resistance_level = level
                         break
@@ -2453,7 +2696,7 @@ class TechnicalAnalyzer:
                 # Also check if near PDH
                 if not at_resistance and support_resistance.pdh > 0:
                     distance_pct = abs(current_high - support_resistance.pdh) / support_resistance.pdh * 100
-                    if distance_pct <= 0.5:
+                    if distance_pct <= RETEST_ZONE_PERCENT:
                         at_resistance = True
                         resistance_level = support_resistance.pdh
 
@@ -2486,7 +2729,10 @@ class TechnicalAnalyzer:
                         entry_price = current_close
                         stop_loss = current_high + (atr * 0.5)
                         
-                        # Target: Next support or PDL
+                        # Calculate risk first
+                        risk = abs(stop_loss - entry_price)
+                        
+                        # Target: Next support or PDL, but cap at 3x risk (realistic for intraday)
                         target = None
                         for s in support_resistance.support_levels:
                             if s < current_price:
@@ -2497,9 +2743,14 @@ class TechnicalAnalyzer:
                             target = support_resistance.pdl
                         
                         if not target:
-                            target = current_price - (atr * 3.0)
+                            target = current_price - (risk * 3.0)  # Default: 3x risk
+                        else:
+                            # Cap target at 3x risk to prevent unrealistic R:R
+                            min_target = entry_price - (risk * 3.0)
+                            if target < min_target:
+                                logger.info(f"📈 Target capped from {target:.2f} to {min_target:.2f} (3x risk)")
+                                target = min_target
                         
-                        risk = abs(stop_loss - entry_price)
                         reward = abs(entry_price - target)
                         rr = reward / risk if risk > 0 else 0
                         
@@ -2531,7 +2782,7 @@ class TechnicalAnalyzer:
                             risk_reward_ratio=rr,
                             timestamp=pd.Timestamp.now(),
                             description=(
-                                f"Bearish pin bar at {resistance_level:.2f} | {setup_reason} | "
+                                f"Bearish pin bar (Entry: {entry_price:.2f}, Near Resistance: {resistance_level:.2f}) | {setup_reason} | "
                                 f"Upper wick: {upper_wick_pct*100:.0f}% | RR: {rr:.1f}"
                             ),
                             debug_info={
@@ -2622,14 +2873,14 @@ class TechnicalAnalyzer:
                 
                 for level in support_resistance.support_levels[:3]:
                     distance_pct = abs(curr_low - level) / level * 100
-                    if distance_pct <= 0.5:
+                    if distance_pct <= RETEST_ZONE_PERCENT:
                         at_support = True
                         support_level = level
                         break
                 
                 if not at_support and support_resistance.pdl > 0:
                     distance_pct = abs(curr_low - support_resistance.pdl) / support_resistance.pdl * 100
-                    if distance_pct <= 0.5:
+                    if distance_pct <= RETEST_ZONE_PERCENT:
                         at_support = True
                         support_level = support_resistance.pdl
 
@@ -2723,14 +2974,14 @@ class TechnicalAnalyzer:
                 
                 for level in support_resistance.resistance_levels[:3]:
                     distance_pct = abs(curr_high - level) / level * 100
-                    if distance_pct <= 0.5:
+                    if distance_pct <= RETEST_ZONE_PERCENT:
                         at_resistance = True
                         resistance_level = level
                         break
                 
                 if not at_resistance and support_resistance.pdh > 0:
                     distance_pct = abs(curr_high - support_resistance.pdh) / support_resistance.pdh * 100
-                    if distance_pct <= 0.5:
+                    if distance_pct <= RETEST_ZONE_PERCENT:
                         at_resistance = True
                         resistance_level = support_resistance.pdh
 
