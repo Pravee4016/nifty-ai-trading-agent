@@ -6,7 +6,7 @@ from datetime import datetime
 import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from main import NiftyTradingAgent
+from app.agent import NiftyTradingAgent
 from analysis_module.technical import Signal, SignalType
 from analysis_module.option_chain_analyzer import OptionChainAnalyzer
 
@@ -26,7 +26,7 @@ class TestWeightedScoring(unittest.TestCase):
         # We can mock `_is_choppy_session` on the class or just ensure it returns False.
         # Ideally, we mock TechnicalAnalyzer entirely.
         
-    @unittest.mock.patch('main.TechnicalAnalyzer')
+    @unittest.mock.patch('analysis_module.technical.TechnicalAnalyzer')
     def test_scoring_logic_bullish(self, MockAnalyzer):
         """Test Scoring System for a Bullish Signal"""
         # 1. Setup Mock Analyzer to avoid Choppy Session
@@ -86,7 +86,7 @@ class TestWeightedScoring(unittest.TestCase):
         self.assertIn("PCR Bullish", str(reasons))
         self.assertIn("Volume High (+10)", reasons)
 
-    @unittest.mock.patch('main.TechnicalAnalyzer')
+    @unittest.mock.patch('analysis_module.technical.TechnicalAnalyzer')
     def test_scoring_rejection(self, MockAnalyzer):
         """Test Rejection of Weak Signal"""
         # 1. Setup Mock
@@ -136,7 +136,7 @@ class TestWeightedScoring(unittest.TestCase):
         self.assertEqual(len(signals), 0, "Weak signal should be rejected by scoring")
         print("\n✅ Weak Signal Rejected as expected.")
 
-    @unittest.mock.patch('main.TechnicalAnalyzer')
+    @unittest.mock.patch('analysis_module.technical.TechnicalAnalyzer')
     def test_mtf_alignment_boost(self, MockAnalyzer):
         """Test MTF Trend Alignment Boost (+15)"""
         # 1. Setup Mock (Aligned Trend)
@@ -193,7 +193,7 @@ class TestWeightedScoring(unittest.TestCase):
         self.assertIn("Trend Aligned", str(signals[0]["score_reasons"]))
         print(f"\n✅ MTF Alignment Boost Verified: Score {signals[0]['score']}")
 
-    @unittest.mock.patch('main.TechnicalAnalyzer')
+    @unittest.mock.patch('analysis_module.technical.TechnicalAnalyzer')
     def test_mtf_conflict_penalty(self, MockAnalyzer):
         """Test MTF Trend Conflict Penalty (-15)"""
         # 1. Setup Mock

@@ -53,7 +53,7 @@ INSTRUMENTS = {
         "display_name": "Bank Nifty",
         "tick_size": 0.05,  # Legacy - use get_tick_size() instead
         "lot_size": 15,
-        "active": True,
+        "active": False,  # DISABLED - Focus on NIFTY only
     },
     "FINNIFTY": {
         "symbol": "FINNIFTY",
@@ -136,6 +136,15 @@ CONFIRMATION_TIMEFRAME = "15MIN"  # Trend confirmation
 MIN_VOLUME_RATIO = float(os.getenv("MIN_VOLUME_RATIO", 1.5))  # 1.5x avg volume
 VOLUME_PERIOD = 20  # candles lookback
 
+# ============================================================================
+# VOLUME PROXY CONFIGURATION (NIFTY/Index)
+# ============================================================================
+VP_ENABLE_FOR_INDEX = os.getenv("VP_ENABLE_FOR_INDEX", "True").lower() == "true"
+VP_RVOL_THRESHOLD = float(os.getenv("VP_RVOL_THRESHOLD", 1.2))  # Futures RVOL
+VP_MIN_SCORE = int(os.getenv("VP_MIN_SCORE", 3))  # Relaxed to 3 (allows 1 missing component)
+VP_ATR_MULT = float(os.getenv("VP_ATR_MULT", 0.25))  # Candle body > 0.25 * ATR (Relaxed)
+VP_VWAP_LOOKBACK = int(os.getenv("VP_VWAP_LOOKBACK", 5))  # For slope calc
+
 # Breakout Configuration
 BREAKOUT_CONFIRMATION_CANDLES = 2
 FALSE_BREAKOUT_RETRACEMENT = float(os.getenv("MAX_FALSE_BREAKOUT_PERCENT", 0.5))
@@ -165,6 +174,13 @@ SMA_VOLUME = 20
 MACD_FAST = 12
 MACD_SLOW = 26
 MACD_SIGNAL = 9
+
+# EMA Crossover Configuration (for combo strategy)
+EMA_CROSSOVER_FAST = int(os.getenv("EMA_CROSSOVER_FAST", 5))
+EMA_CROSSOVER_SLOW = int(os.getenv("EMA_CROSSOVER_SLOW", 15))
+
+# Combo Signal Feature Flag
+USE_COMBO_SIGNALS = os.getenv("USE_COMBO_SIGNALS", "True").lower() == "true"
 
 # Bollinger Bands
 BB_PERIOD = 20
@@ -381,3 +397,50 @@ if __name__ == "__main__":
         print("\n📝 Please create .env file with required keys")
     else:
         print("✅ Configuration validated successfully!")
+
+
+# ============================================================================
+# CONFLUENCE DETECTION (Absolute Points,Not Percentage)
+# ============================================================================
+# Critical: Confluence should use absolute point tolerance, not percentage
+# At NIFTY 25000: 0.2% = 50 points (TOO WIDE!)
+# Should be: 3 points absolute (regardless of price)
+CONFLUENCE_TOLERANCE_POINTS = 3.0  # NIFTY: ±3 points for confluence
+CONFLUENCE_TOLERANCE_POINTS_BNF = 5.0  # BANKNIFTY: ±5 points (higher volatility)
+
+
+# ============================================================================
+# 1-MINUTE CONFIRMATION SETTINGS (Phase 2)
+# ============================================================================
+# Enable 1-minute confirmation filter for precision entries
+ENABLE_1M_CONFIRMATION = os.getenv("ENABLE_1M_CONFIRMATION", "False").lower() == "true"
+
+# Minimum rejection candles required (out of last 3-5 candles)
+MIN_REJECTION_CANDLES = int(os.getenv("MIN_REJECTION_CANDLES", "2"))
+
+# Minimum wick size as % of candle range to qualify as rejection
+MIN_WICK_PERCENTAGE = float(os.getenv("MIN_WICK_PERCENTAGE", "40.0"))
+
+# Price tolerance for "near level" check (% distance from key level)
+LEVEL_TOLERANCE_1M = float(os.getenv("LEVEL_TOLERANCE_1M", "0.5"))
+
+# Number of 1-minute candles to analyze
+CANDLES_1M_LOOKBACK = int(os.getenv("CANDLES_1M_LOOKBACK", "5"))
+
+
+# ============================================================================
+# 1-MINUTE MULTI-CANDLE ANALYSIS (Cost-Free Enhancement)
+# ============================================================================
+
+# Enable analyzing multiple 1-minute candles per 5-minute job run
+USE_1M_ANALYSIS = os.getenv("USE_1M_ANALYSIS", "true").lower() == "true"
+
+# Number of 1-minute candles to analyze per job run (default: 5)
+# Each job run fetches and analyzes this many recent 1-minute candles
+CANDLES_PER_ANALYSIS = int(os.getenv("CANDLES_PER_ANALYSIS", "5"))
+
+# Alert deduplication time window in minutes
+# Prevents duplicate alerts for same signal within this time window
+ALERT_DEDUPE_WINDOW_MINUTES = int(os.getenv("ALERT_DEDUPE_WINDOW_MINUTES", "15"))
+
+

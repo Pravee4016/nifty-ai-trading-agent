@@ -119,7 +119,7 @@ class GroqAnalyzer:
         return {
             "enabled": self.enabled,
             "model": self.model,
-            "requests_today": 0, # TODO: Implement real tracking if needed
+            "requests_today": 0,  # Not implemented - usage tracked at Groq API level
             "tokens_used": 0
         }
 
@@ -204,6 +204,21 @@ OUTPUT JSON: {"outlook": "BULLISH"|"BEARISH"|"NEUTRAL", "confidence": 0-100, "su
         signal_type = sig.get('signal_type', 'UNKNOWN')
         price = sig.get('price_level', 0)
         trend_15m = context.get('trend_direction', 'FLAT')
+        entry_price = float(sig.get('entry_price', 0))
+        stop_loss = float(sig.get('stop_loss', 0))
+        
+        # Determine signal direction from entry vs stop loss
+        # If SL > Entry = SHORT, if SL < Entry = LONG
+        if stop_loss > entry_price:
+            direction = "SHORT"
+        elif stop_loss < entry_price:
+            direction = "LONG"
+        else:
+            # Fallback: try to infer from signal type keywords
+            if any(x in signal_type.upper() for x in ["BEARISH", "RESISTANCE", "SHORT", "BREAKDOWN"]):
+                direction = "SHORT"
+            else:
+                direction = "LONG"
         
         mtf_data = (
             f"15m Trend: {trend_15m}\n"
@@ -220,8 +235,10 @@ ANALYZE THIS TRADE SETUP:
 
 INSTRUMENT: NIFTY 50
 SIGNAL: {signal_type}
+DIRECTION: {direction}  ← CRITICAL: Use SELL verdicts for SHORT, BUY verdicts for LONG
 LEVEL: {price}
-CURRENT PRICE: {sig.get('entry_price')}
+ENTRY: {entry_price}
+STOP LOSS: {stop_loss}
 
 TECHNICAL CONTEXT:
 {mtf_data}
@@ -229,8 +246,13 @@ TECHNICAL CONTEXT:
 SIGNAL METRICS:
 - Confidence: {sig.get('confidence')}%
 - R:R Ratio: {sig.get('risk_reward_ratio', 0):.2f}
-- Volume Surge: {sig.get('volume_confirmed')}
 - Description: {sig.get('description')}
+
+NOTE: This is an INDEX instrument - volume data is not available/relevant.
+
+CRITICAL: Your verdict MUST match the DIRECTION above:
+- If DIRECTION is SHORT → use STRONG_SELL or CAUTIOUS_SELL (NOT BUY)
+- If DIRECTION is LONG → use STRONG_BUY or CAUTIOUS_BUY (NOT SELL)
 
 Evaluate based on Multi-Timeframe alignment and Market Structure.
 """

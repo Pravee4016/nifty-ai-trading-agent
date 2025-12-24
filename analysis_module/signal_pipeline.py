@@ -18,6 +18,7 @@ from config.settings import (
     ML_MODEL_NAME,
     ML_CONFIDENCE_THRESHOLD,
     ML_FALLBACK_TO_RULES,
+    USE_COMBO_SIGNALS,  # NEW: Combo strategy flag
 )
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,7 @@ class SignalPipeline:
     3. IV/Volatility Checks
     4. Correlation Checks
     5. Scoring & AI Enrichment
+    6. MACD+RSI+BB Combo Validation (NEW)
     """
 
     def __init__(self, groq_analyzer=None):
@@ -56,6 +58,17 @@ class SignalPipeline:
         from analysis_module.market_state_engine import MarketStateEngine
         self.state_engine = MarketStateEngine()
         logger.info("✅ Market State Engine initialized")
+        
+        # NEW: Initialize Combo Signal Evaluator
+        self.combo_evaluator = None
+        if USE_COMBO_SIGNALS:
+            try:
+                from analysis_module.combo_signals import MACDRSIBBCombo
+                self.combo_evaluator = MACDRSIBBCombo()
+                logger.info("✅ MACD+RSI+BB Combo evaluator initialized")
+            except Exception as e:
+                logger.warning(f"⚠️ Combo evaluator failed to initialize: {e}")
+
 
     def process_signals(
         self,
@@ -114,6 +127,57 @@ class SignalPipeline:
              logger.info(f"⏭️  Suppressing signals for {instrument} (Low IV: {iv}%)")
              return []
 
+        # Step 1.1: Volume-Proxy Validation (Index Only)
+        # -----------------------------------------------
+        from config.settings import VP_ENABLE_FOR_INDEX, VP_MIN_SCORE
+        
+        is_index = "NIFTY" in instrument or "BANKNIFTY" in instrument
+        if is_index and VP_ENABLE_FOR_INDEX:
+            try:
+                # Use df_5m for volume proxy analysis
+                df_proxy = technical_context.get("df_5m")
+                if df_proxy is not None and not df_proxy.empty:
+                    # Instantiate Analyzer
+                    from analysis_module.technical import TechnicalAnalyzer
+                    analyzer = TechnicalAnalyzer(instrument)
+                    
+                    # Calculate Proxy Score
+                    vp_result = analyzer.calculate_volume_proxy(
+                        df=df_proxy,
+                        option_chain_data=option_metrics
+                        # futures_df=None (using spot volume/proxy for now)
+                    )
+                    
+                    vp_score = vp_result.get("score", 0)
+                    vp_breakdown = vp_result.get("breakdown", [])
+                    
+                    # Log the score
+                    logger.info(f"📊 Volume-Proxy ({instrument}): Score {vp_score}/6 | {', '.join(vp_breakdown)}")
+                    
+                    # GATE: Block if Score < threshold
+                    if vp_score < VP_MIN_SCORE:
+                        logger.info(f"🛑 Volume-Proxy Rejected | Score {vp_score} < {VP_MIN_SCORE} | Blocking signals")
+                        # Attach failure reason to raw_signals for debug/trace capability? 
+                        # Or just return empty list to stop processing.
+                        return []
+                    
+                    # Attach VP info to signals for downstream context
+                    for s in raw_signals:
+                        s["volume_proxy"] = {
+                            "score": vp_score,
+                            "breakdown": vp_breakdown,
+                            "passed": True
+                        }
+                        # Add to description for visibility
+                        s["description"] = (s.get("description", "") + 
+                                          f"\n\n💎 <b>Volume Proxy: {vp_score}/6</b>\n" +
+                                          f"Details: {', '.join(vp_breakdown)}")
+                        
+            except Exception as e:
+                logger.error(f"⚠️ Volume-Proxy check failed: {e}")
+                # Don't block on error, proceed
+
+
         # Step 2: Correlation Check (Recent Alerts)
         # -----------------------------------------
         # Check if we have too many recent alerts in the same direction
@@ -169,11 +233,90 @@ class SignalPipeline:
             blocked = len(valid_signals) - len(gated_signals)
             logger.info(f"⏭️ {state.value} State | Blocked {blocked} signals (state-gated)")
         
+        # Step 3.75: 1-Minute Confirmation (Phase 2)
+        # --------------------------------------------
+        from config.settings import ENABLE_1M_CONFIRMATION
+        
+        confirmed_signals = []
+        
+        if ENABLE_1M_CONFIRMATION:
+            logger.info(f"🔍 1-Minute Confirmation | Validating {len(gated_signals)} signals")
+            
+            # Import data fetcher and technical analyzer
+            from data_module.fetcher import get_data_fetcher
+            from analysis_module.technical import TechnicalAnalyzer
+            
+            fetcher = get_data_fetcher()
+            analyzer = TechnicalAnalyzer(instrument)
+            
+            for signal in gated_signals:
+                try:
+                    # Determine signal direction
+                    signal_type = signal.get("signal_type", "")
+                    is_bullish = "BULLISH" in signal_type or "SUPPORT" in signal_type
+                    direction = "LONG" if is_bullish else "SHORT"
+                    
+                    # Get key level from signal
+                    level = signal.get("price_level") or signal.get("entry_price", 0)
+                    
+                    if not level or level == 0:
+                        logger.warning(f"⚠️ 1m Confirmation skipped for {signal_type}: No valid level")
+                        confirmed_signals.append(signal)  # Allow if no level (edge case)
+                        continue
+                    
+                    # Fetch 1-minute data
+                    df_1m = fetcher.fetch_1m_data(instrument, bars=5)
+                    
+                    if df_1m is None or df_1m.empty:
+                        logger.warning(f"⚠️ 1m Confirmation skipped for {signal_type}: No 1m data")
+                        confirmed_signals.append(signal)  # Allow if data unavailable (fallback)
+                        continue
+                    
+                    # Validate 1m confirmation
+                    confirmation = analyzer.validate_1m_confirmation(
+                        df_1m=df_1m,
+                        signal_type=signal_type,
+                        direction=direction,
+                        level=level
+                    )
+                    
+                    # Store confirmation data in signal
+                    signal["1m_confirmation"] = confirmation
+                    
+                    if confirmation['confirmed']:
+                        logger.info(
+                            f"✅ 1m Confirmed | {signal_type} | "
+                            f"Pattern: {confirmation['pattern']} | "
+                            f"Strength: {confirmation['strength']:.1f}%"
+                        )
+                        confirmed_signals.append(signal)
+                    else:
+                        logger.info(
+                            f"❌ 1m Rejected | {signal_type} | "
+                            f"Reason: {confirmation['reason']}"
+                        )
+                        # Signal rejected - not added to confirmed_signals
+                    
+                except Exception as e:
+                    logger.error(f"❌ 1m Confirmation error for {signal.get('signal_type')}: {e}")
+                    confirmed_signals.append(signal)  # Allow on error (fail-safe)
+            
+            # Update gated_signals to only include confirmed signals
+            if len(confirmed_signals) < len(gated_signals):
+                rejected = len(gated_signals) - len(confirmed_signals)
+                logger.info(f"📊 1m Confirmation | Passed: {len(confirmed_signals)}/{len(gated_signals)} | Rejected: {rejected}")
+            
+            # Use confirmed signals for further processing
+            signals_to_process = confirmed_signals
+        else:
+            # Feature disabled - process all gated signals
+            signals_to_process = gated_signals
+        
         processed_signals = []
 
         # Step 4: Individual Signal Scoring & AI
         # --------------------------------------
-        for signal in valid_signals:
+        for signal in signals_to_process:
             # ML-Based Scoring (if enabled and available)
             if self.ml_predictor and self.ml_predictor.enabled:
                 try:
@@ -332,9 +475,26 @@ class SignalPipeline:
         """
         Resolve conflicting signals (LONG vs SHORT) using Option Data & Confidence.
         """
+        import time
+        
         if not signals:
             return []
-            
+        
+        # CRITICAL: Validate option data freshness before using for conflict resolution
+        # Stale data can lead to wrong directional bias
+        fetch_timestamp = option_metrics.get('fetch_timestamp', time.time())
+        data_age_seconds = time.time() - fetch_timestamp
+        
+        MAX_OPTION_DATA_AGE = 300  # 5 minutes (300 seconds)
+        
+        if data_age_seconds > MAX_OPTION_DATA_AGE:
+            logger.warning(
+                f"⚠️ Option data is {data_age_seconds:.0f}s old (>{MAX_OPTION_DATA_AGE}s). "
+                f"Data too stale for reliable conflict resolution. Returning all signals."
+            )
+            return signals  # Don't use stale data - could give wrong directional bias
+        
+        # Data is fresh - proceed with conflict resolution
         long_signals = [s for s in signals if any(x in s["signal_type"] for x in ["BULLISH", "SUPPORT"])]
         short_signals = [s for s in signals if any(x in s["signal_type"] for x in ["BEARISH", "RESISTANCE"])]
         
@@ -566,6 +726,78 @@ class SignalPipeline:
                         
                 except Exception as e:
                     logger.warning(f"Rejection confluence bonus failed: {e}")
+
+        # 8. MACD + RSI + BB Combo Signal Evaluation (NEW)
+        # ------------------------------------------------
+        if USE_COMBO_SIGNALS and self.combo_evaluator:
+            try:
+                # Determine signal direction
+                direction = "BULLISH" if is_bullish else "BEARISH"
+                
+                # Get dataframe from context
+                df = analysis_context.get("df_5m") or analysis_context.get("df")
+                
+                if df is not None and len(df) >= 50:
+                    # Calculate MACD if not in context
+                    macd_data = htf.get("macd")
+                    if not macd_data:
+                        # Import TechnicalAnalyzer to calculate MACD
+                        from analysis_module.technical import TechnicalAnalyzer
+                        analyzer = TechnicalAnalyzer("TEMP")
+                        macd_data = analyzer._calculate_macd(df)
+                    
+                    # Calculate BB if not in context
+                    bb_upper = htf.get("bb_upper_5m", 0.0)
+                    bb_lower = htf.get("bb_lower_5m", 0.0)
+                    
+                    if bb_upper == 0.0 or bb_lower == 0.0:
+                        from analysis_module.technical import TechnicalAnalyzer
+                        analyzer = TechnicalAnalyzer("TEMP")
+                        bb_data = analyzer._calculate_bollinger_bands(df)
+                        if bb_data and 'upper' in bb_data:
+                            bb_upper = bb_data['upper'].iloc[-1]
+                            bb_lower = bb_data['lower'].iloc[-1]
+                    
+                    # Get RSI
+                    rsi_5 = htf.get("rsi_5", 50)
+                    
+                    # Build technical context for combo
+                    technical_context = {
+                        "macd": macd_data,
+                        "rsi_5": rsi_5,
+                        "bb_upper": bb_upper,
+                        "bb_lower": bb_lower
+                    }
+                    
+                    #Evaluate combo signal
+                    combo_result = self.combo_evaluator.evaluate_signal(
+                        df=df,
+                        direction_bias=direction,
+                        technical_context=technical_context
+                    )
+                    
+                    # Apply combo scoring
+                    combo_strength = combo_result['strength']
+                    combo_score = combo_result['score']
+                    
+                    if combo_strength == 'STRONG':
+                        score += 15
+                        reasons.append(f"🔥 STRONG Combo ({combo_score}/3: {combo_result['details']}) (+15)")
+                    elif combo_strength == 'MEDIUM':
+                        score += 10
+                        reasons.append(f"✅ MEDIUM Combo ({combo_score}/3: {combo_result['details']}) (+10)")
+                    elif combo_strength == 'WEAK':
+                        score -= 10  # Conservative penalty for weak combo
+                        reasons.append(f"⚠️ WEAK Combo ({combo_score}/3: {combo_result['details']}) (-10)")
+                    else:  # INVALID
+                        score -= 15  # Penalty for invalid combo
+                        reasons.append(f"❌ INVALID Combo ({combo_result['details']}) (-15)")
+                    
+                    # Store combo result in signal data for logging/alerts
+                    sig_data['combo_signal'] = combo_result
+                    
+            except Exception as e:
+                logger.warning(f"Combo signal evaluation failed: {e}")
 
         return max(0, min(100, score)), reasons
     

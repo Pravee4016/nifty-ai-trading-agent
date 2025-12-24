@@ -237,8 +237,9 @@ class TradeTracker:
             return {}
 
         try:
-            # Calculate start date
-            start_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+            # Calculate start date (IST aware)
+            ist = pytz.timezone(TIME_ZONE)
+            start_date = (datetime.now(ist) - timedelta(days=days)).strftime("%Y-%m-%d")
             
             # Query trades
             trades_ref = self.db.collection(self.collection_name)

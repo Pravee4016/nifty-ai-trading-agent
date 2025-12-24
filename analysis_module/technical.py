@@ -8,7 +8,7 @@ import pandas as pd
 import numpy as np
 import logging
 from datetime import datetime, time
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Any
 from dataclasses import dataclass
 from enum import Enum
 
@@ -138,7 +138,7 @@ class TechnicalAnalyzer:
             )
 
             if len(daily_df) < 2:
-                logger.warning("❌ Not enough daily data for PDH/PDL")
+                logger.debug("ℹ️ Insufficient daily data for PDH/PDL (need 2+ days)")
                 return None, None
 
             prev_day = daily_df.iloc[-2]
@@ -252,6 +252,185 @@ class TechnicalAnalyzer:
         except Exception as e:
             logger.error(f"❌ S/R calculation failed: {str(e)}")
             return TechnicalLevels([], [], 0.0, 0.0, 0.0, 0.0, 0.0)
+
+    # =====================================================================
+    # VOLUME PROXY (VWAP + FUTURES + OPTIONS)
+    # =====================================================================
+
+    def calculate_volume_proxy(
+        self, 
+        df: pd.DataFrame, 
+        option_chain_data: Dict = None, 
+        futures_df: pd.DataFrame = None
+    ) -> Dict:
+        """
+        Calculate Institutional Volume Proxy for Index Trading.
+        
+        Components:
+        1. VWAP Acceptance: Price accepting value?
+        2. Futures RVOL: Is there real volume? (Requires Futures Data)
+        3. Options Pressure: Smart money positioning?
+        
+        Returns:
+            Dict containing score (0-6) and breakdown
+        """
+        try:
+            score = 0
+            breakdown = []
+            
+            if df.empty:
+                return {"score": 0, "breakdown": ["No Data"]}
+            
+            # --- 1. VWAP Acceptance (Score: +2) ---
+            from config.settings import VP_ATR_MULT, VP_VWAP_LOOKBACK
+            
+            # Helper to get valid series
+            current_close = df["close"].iloc[-1] if "close" in df else df["Close"].iloc[-1]
+            current_open = df["open"].iloc[-1] if "open" in df else df["Open"].iloc[-1]
+            
+            # Handle potential Case Sensitivity or Missing Columns
+            vwap_series = df.get("vwap", pd.Series([0]*len(df)))
+            atr_series = df.get("atr", pd.Series([0]*len(df)))
+            
+            # --- FALLBACK LOGIC FOR SPOT INDEX (No Volume -> No VWAP) ---
+            # If VWAP is all 0s or NaNs, use EMA20 as "Value Line"
+            if vwap_series.isnull().all() or (vwap_series == 0).all():
+                # Check if we have EMA20, if not calc it
+                if "ema20" in df.columns:
+                    vwap_series = df["ema20"]
+                    # breakdown.append("Using EMA20(Proxy)") 
+                else:
+                    # Quick calc EMA20
+                    close_series = df["close"] if "close" in df else df["Close"]
+                    vwap_series = close_series.ewm(span=20, adjust=False).mean()
+            
+            vwap = vwap_series.iloc[-1]
+            atr = atr_series.iloc[-1]
+            
+            # Check Slope (Handle NaNs)
+            vwap_diff = vwap_series.diff(VP_VWAP_LOOKBACK)
+            vwap_slope = vwap_diff.iloc[-1]
+            if pd.isna(vwap_slope): vwap_slope = 0
+            
+            # Check Candle Body
+            body_size = abs(current_close - current_open)
+            valid_body = body_size > (VP_ATR_MULT * atr)
+            
+            # Bullish: Price > Value Line + Slope Up + Body Ok
+            vwap_bullish = (current_close > vwap) and (vwap_slope >= -0.05) and valid_body # Relaxed slope slightly
+            
+            # Bearish: Price < Value Line + Slope Down + Body Ok
+            vwap_bearish = (current_close < vwap) and (vwap_slope <= 0.05) and valid_body
+            
+            if vwap_bullish:
+                score += 2
+                breakdown.append("VWAP:✅Bull(+2)")
+            elif vwap_bearish:
+                score += 2
+                breakdown.append("VWAP:✅Bear(+2)")
+            else:
+                # Debug info in breakdown for transparency
+                breakdown.append("VWAP:❌(+0)")
+                
+            # --- 2. Futures RVOL (Score: +1) ---
+            rvol_ok = False
+            rvol_val = 0.0
+            
+            target_df = futures_df if futures_df is not None else df
+            # Use 'Volume' or 'volume'
+            vol_col = "volume" if "volume" in target_df.columns else "Volume"
+            
+            if vol_col in target_df.columns:
+                from config.settings import VOLUME_PERIOD, VP_RVOL_THRESHOLD
+                volumes = target_df[vol_col]
+                avg_vol = volumes.rolling(VOLUME_PERIOD).mean().iloc[-1]
+                curr_vol = volumes.iloc[-1]
+                
+                if avg_vol > 0 and not pd.isna(avg_vol):
+                    rvol_val = curr_vol / avg_vol
+                    if rvol_val >= VP_RVOL_THRESHOLD:
+                        rvol_ok = True
+            
+            if rvol_ok:
+                score += 1
+                breakdown.append(f"RVOL:✅{rvol_val:.1f}x(+1)")
+            else:
+                breakdown.append(f"RVOL:❌{rvol_val:.1f}x(+0)")
+
+            # --- 3. Options Pressure (Score: +2) ---
+            # Logic: ATM & +/- 1 Strike. OI Change + Volume
+            options_score = 0
+            if option_chain_data:
+                # We expect option_chain_data to calculate net pressure beforehand 
+                # or provide raw data. Assuming pre-calculated sentiment or raw totals.
+                # For this implementation, we'll implement the specific logic if raw data is available
+                # Or rely on the 'oi_analysis' summary
+                
+                # Let's verify using the "observation" rules provided:
+                # Call OI ↑ + Price ↓ = Resistance (Bearish) -> Need to know Price direction
+                # Put OI ↑ + Price ↑ = Support (Bullish)
+                
+                # Simplified "Pressure" Logic based on Net Delta of OI/Vol
+                # Bullish: Put OI Chg > 0, Call OI Chg < 0 (Unwinding), Put Vol > Call Vol
+                # Bearish: Call OI Chg > 0, Put OI Chg < 0 (Unwinding), Call Vol > Put Vol
+                
+                # Extract aggregated metrics
+                net_call_oi_chg = option_chain_data.get("net_call_oi_chg", 0)
+                net_put_oi_chg = option_chain_data.get("net_put_oi_chg", 0)
+                total_call_vol = option_chain_data.get("total_call_vol", 0)
+                total_put_vol = option_chain_data.get("total_put_vol", 0)
+                
+                # Bullish Pressure
+                opt_bullish = (
+                    (net_put_oi_chg > 0) and 
+                    (total_put_vol > total_call_vol)
+                    # Relaxed: Don't strictly require Call OI < 0, but it helps
+                )
+                
+                # Bearish Pressure
+                opt_bearish = (
+                    (net_call_oi_chg > 0) and 
+                    (total_call_vol > total_put_vol)
+                )
+                
+                if opt_bullish:
+                    options_score = 2
+                    breakdown.append("Opt:✅Bull(+2)")
+                elif opt_bearish:
+                    options_score = 2
+                    breakdown.append("Opt:✅Bear(+2)")
+                else:
+                    breakdown.append("Opt:❌(+0)")
+            else:
+                 breakdown.append("Opt:N/A(+0)")
+                 
+            score += options_score
+
+            # --- 4. ATR Expansion (Score: +1) ---
+            # "Is volatility expanding?"
+            atr_expanding = False
+            avg_atr = df["atr"].rolling(20).mean().iloc[-1]
+            if atr > avg_atr:
+                atr_expanding = True
+                
+            if atr_expanding:
+                score += 1
+                breakdown.append("ATR:✅(+1)")
+            else:
+                breakdown.append("ATR:❌(+0)")
+
+            return {
+                "score": score,
+                "breakdown": breakdown,
+                "vwap_bullish": vwap_bullish,
+                "vwap_bearish": vwap_bearish,
+                "rvol_ok": rvol_ok,
+                "options_valid": options_score > 0
+            }
+
+        except Exception as e:
+            logger.error(f"❌ Volume Proxy Calculation Failed: {e}")
+            return {"score": 0, "breakdown": ["Error"]}
 
     def _find_support_levels(self, lows: np.ndarray) -> List[float]:
         """Identify support levels via local minima."""
@@ -1252,19 +1431,20 @@ class TechnicalAnalyzer:
                         # EXCEPTION: ORB and PDH breaks don't always need consolidation
                         is_major_level = (breakout_type == "ORB") or (abs(breakout_level - support_resistance.pdh) < 1.0)
                         
-                        # NEW: For indices, relax consolidation requirement if strong trend
+                        # NEW: For indices, bypass consolidation requirement entirely (no volume data)
                         is_index = "NIFTY" in self.instrument.upper() or "INDEX" in self.instrument.upper()
-                        strong_trend = (trend_dir == "UP" and rsi_15 >= 50)
                         
-                        if is_index and strong_trend:
-                            # Allow signals in strong trends even without consolidation
-                            logger.info(f"✅ Index strong trend override (RSI {rsi_15:.1f}) - Consolidation not required")
-                        elif not is_consolidating and not has_surge and not is_major_level:
+                        # Only check consolidation/surge for non-index instruments
+                        if not is_index and not is_consolidating and not has_surge and not is_major_level:
                             logger.info(
                                 f"⏭️ Bullish breakout ignored (No consolidation/surge) | "
                                 f"Vol: {surge_ratio:.1f}x"
                             )
                             return None
+                        
+                        # Log index bypass for transparency
+                        if is_index:
+                            logger.info(f"✅ Index instrument - consolidation/surge check bypassed (no volume data)")
                         
                         # NEW: RVOL Filter (Relative Volume check)
                         # Skip RVOL check for indices (they have no volume data)
@@ -1417,19 +1597,20 @@ class TechnicalAnalyzer:
                 # Exception: Major Levels (ORB/PDL)
                 is_major_level = (breakdown_type == "ORB") or (support_resistance.pdl > 0 and abs(breakdown_level - support_resistance.pdl) < 1.0)
 
-                # NEW: For indices, relax consolidation requirement if strong trend
+                # NEW: For indices, bypass consolidation requirement entirely (no volume data)
                 is_index = "NIFTY" in self.instrument.upper() or "INDEX" in self.instrument.upper()
-                strong_trend = (trend_dir == "DOWN" and rsi_15 <= 50)
                 
-                if is_index and strong_trend:
-                    # Allow signals in strong trends even without consolidation
-                    logger.info(f"✅ Index strong trend override (RSI {rsi_15:.1f}) - Consolidation not required")
-                elif not is_consolidating and not has_surge and not is_major_level:
+                # Only check consolidation/surge for non-index instruments
+                if not is_index and not is_consolidating and not has_surge and not is_major_level:
                     logger.info(
                         f"⏭️ Bearish breakdown ignored (No consolidation/surge) | "
                         f"Vol: {surge_ratio:.1f}x"
                     )
                     return None
+                
+                # Log index bypass for transparency
+                if is_index:
+                    logger.info(f"✅ Index instrument - consolidation/surge check bypassed (no volume data)")
             
                 # NEW: RVOL Filter (Relative Volume check)
                 # Skip RVOL check for indices (they have no volume data)
@@ -2428,6 +2609,174 @@ class TechnicalAnalyzer:
         except Exception:
             return 50.0
 
+    def _calculate_macd(
+        self, 
+        df: pd.DataFrame, 
+        fast: int = None, 
+        slow: int = None, 
+        signal: int = None
+    ) -> Dict:
+        """
+        Calculate MACD (Moving Average Convergence Divergence).
+        
+        Args:
+            df: OHLCV DataFrame
+            fast: Fast EMA period (default from config)
+            slow: Slow EMA period (default from config)
+            signal: Signal line period (default from config)
+        
+        Returns:
+            {
+                "macd_line": float,
+                "signal_line": float,
+                "histogram": float,
+                "crossover": str  # "BULLISH", "BEARISH", "NONE"
+            }
+        """
+        try:
+            from config.settings import MACD_FAST, MACD_SLOW, MACD_SIGNAL
+            
+            fast = fast or MACD_FAST
+            slow = slow or MACD_SLOW
+            signal = signal or MACD_SIGNAL
+            
+            if len(df) < slow + signal:
+                logger.warning(f"Insufficient data for MACD calculation (need {slow + signal} candles)")
+                return {
+                    "macd_line": 0.0,
+                    "signal_line": 0.0,
+                    "histogram": 0.0,
+                    "crossover": "NONE"
+                }
+            
+            # Calculate MACD line
+            ema_fast = df['close'].ewm(span=fast, adjust=False).mean()
+            ema_slow = df['close'].ewm(span=slow, adjust=False).mean()
+            macd_line = ema_fast - ema_slow
+            
+            # Calculate signal line
+            signal_line = macd_line.ewm(span=signal, adjust=False).mean()
+            
+            # Calculate histogram
+            histogram = macd_line - signal_line
+            
+            # Detect crossover (check last 2 candles)
+            crossover = "NONE"
+            if len(histogram) >= 2:
+                prev_hist = histogram.iloc[-2]
+                curr_hist = histogram.iloc[-1]
+                
+                if prev_hist <= 0 and curr_hist > 0:
+                    crossover = "BULLISH"
+                    logger.info(f"🔼 MACD Bullish Crossover: Histogram {prev_hist:.2f} → {curr_hist:.2f}")
+                elif prev_hist >= 0 and curr_hist < 0:
+                    crossover = "BEARISH"
+                    logger.info(f"🔽 MACD Bearish Crossover: Histogram {prev_hist:.2f} → {curr_hist:.2f}")
+            
+            return {
+                "macd_line": round(macd_line.iloc[-1], 2),
+                "signal_line": round(signal_line.iloc[-1], 2),
+                "histogram": round(histogram.iloc[-1], 2),
+                "crossover": crossover
+            }
+        
+        except Exception as e:
+            logger.error(f"Error calculating MACD: {e}")
+            return {
+                "macd_line": 0.0,
+                "signal_line": 0.0,
+                "histogram": 0.0,
+                "crossover": "NONE"
+            }
+
+    def detect_ema_crossover(
+        self, 
+        df: pd.DataFrame, 
+        fast: int = None, 
+        slow: int = None
+    ) -> Dict:
+        """
+        Detect EMA crossover for directional bias.
+        
+        Args:
+            df: OHLCV DataFrame
+            fast: Fast EMA period (default from config)
+            slow: Slow EMA period (default from config)
+        
+        Returns:
+            {
+                "bias": str,  # "BULLISH", "BEARISH", "NEUTRAL"
+                "confidence": float,  # 0.0 to 1.0
+                "price_separation_pct": float,
+                "ema_fast": float,
+                "ema_slow": float
+            }
+        """
+        try:
+            from config.settings import EMA_CROSSOVER_FAST, EMA_CROSSOVER_SLOW
+            
+            fast = fast or EMA_CROSSOVER_FAST
+            slow = slow or EMA_CROSSOVER_SLOW
+            
+            if len(df) < slow + 5:
+                logger.warning(f"Insufficient data for EMA crossover (need {slow + 5} candles)")
+                return {
+                    "bias": "NEUTRAL",
+                    "confidence": 0.0,
+                    "price_separation_pct": 0.0,
+                    "ema_fast": 0.0,
+                    "ema_slow": 0.0
+                }
+            
+            # Calculate EMAs
+            ema_fast = df['close'].ewm(span=fast, adjust=False).mean()
+            ema_slow = df['close'].ewm(span=slow, adjust=False).mean()
+            
+            current_price = df['close'].iloc[-1]
+            ema_f = ema_fast.iloc[-1]
+            ema_s = ema_slow.iloc[-1]
+            
+            # Check for crossover
+            bias = "NEUTRAL"
+            if len(ema_fast) >= 2:
+                prev_f = ema_fast.iloc[-2]
+                prev_s = ema_slow.iloc[-2]
+                
+                # Bullish crossover: Fast EMA crosses above Slow EMA + Price > Fast EMA
+                if prev_f <= prev_s and ema_f > ema_s and current_price > ema_f:
+                    bias = "BULLISH"
+                    logger.info(f"🔼 EMA {fast}/{slow} Bullish Crossover detected")
+                
+                # Bearish crossover: Fast EMA crosses below Slow EMA + Price < Fast EMA
+                elif prev_f >= prev_s and ema_f < ema_s and current_price < ema_f:
+                    bias = "BEARISH"
+                    logger.info(f"🔽 EMA {fast}/{slow} Bearish Crossover detected")
+            
+            # Calculate price separation percentage (for confidence)
+            price_sep_pct = abs(current_price - ema_s) / ema_s * 100
+            
+            # Confidence: Higher if price is well separated from slow EMA
+            # 1% separation = 100% confidence
+            confidence = min(price_sep_pct / 1.0, 1.0)
+            
+            return {
+                "bias": bias,
+                "confidence": round(confidence, 2),
+                "price_separation_pct": round(price_sep_pct, 2),
+                "ema_fast": round(ema_f, 2),
+                "ema_slow": round(ema_s, 2)
+            }
+        
+        except Exception as e:
+            logger.error(f"Error detecting EMA crossover: {e}")
+            return {
+                "bias": "NEUTRAL",
+                "confidence": 0.0,
+                "price_separation_pct": 0.0,
+                "ema_fast": 0.0,
+                "ema_slow": 0.0
+            }
+
     def _calculate_vwap(self, df: pd.DataFrame) -> Tuple[pd.Series, float, str]:
         """
         Calculate intraday VWAP (Volume Weighted Average Price).
@@ -3063,6 +3412,253 @@ class TechnicalAnalyzer:
         except Exception as e:
             logger.error(f"❌ Engulfing detection failed: {str(e)}")
             return None
+
+    # =====================================================================
+    # 1-MINUTE CONFIRMATION LOGIC
+    # =====================================================================
+
+    def _detect_rejection_candle(
+        self,
+        candle: pd.Series,
+        direction: str
+    ) -> Dict[str, Any]:
+        """
+        Detect if a single 1-minute candle shows rejection.
+        
+        Args:
+            candle: Single row from 1-minute DataFrame
+            direction: "LONG" or "SHORT"
+        
+        Returns:
+            {
+                'is_rejection': bool,
+                'wick_pct': float,
+                'body_pct': float,
+                'strength': float (0-100)
+            }
+        
+        Rejection Rules:
+            LONG (bullish rejection at support):
+                - Lower wick >= 40% of total range
+                - Close > Open (bullish candle)
+                - Body in upper 60% of range
+            
+            SHORT (bearish rejection at resistance):
+                - Upper wick >= 40% of total range
+                - Close < Open (bearish candle)
+                - Body in lower 60% of range
+        """
+        try:
+            candle_open = float(candle.get('open', 0))
+            candle_close = float(candle.get('close', 0))
+            candle_high = float(candle.get('high',0))
+            candle_low = float(candle.get('low', 0))
+            
+            total_range = candle_high - candle_low
+            
+            if total_range < 0.0001:  # Avoid division by zero
+                return {
+                    'is_rejection': False,
+                    'wick_pct': 0,
+                    'body_pct': 0,
+                    'strength': 0
+                }
+            
+            body_size = abs(candle_close - candle_open)
+            upper_wick = candle_high - max(candle_open, candle_close)
+            lower_wick = min(candle_open, candle_close) - candle_low
+            
+            body_pct = (body_size / total_range) * 100
+            upper_wick_pct = (upper_wick / total_range) * 100
+            lower_wick_pct = (lower_wick / total_range) * 100
+            
+            # Determine body location in range
+            body_mid = (max(candle_open, candle_close) + min(candle_open, candle_close)) / 2
+            body_position_pct = ((body_mid - candle_low) / total_range) * 100
+            
+            if direction == "LONG":
+                # Bullish rejection: long lower wick, bullish body, body in upper part
+                is_bullish_body = candle_close > candle_open
+                is_lower_wick_long = lower_wick_pct >= 40.0
+                is_body_upper = body_position_pct >= 40.0  # Body not in lowest 40%
+                
+                is_rejection = is_bullish_body and is_lower_wick_long and is_body_upper
+                wick_pct = lower_wick_pct
+                
+                # Calculate strength (0-100)
+                strength = 0
+                if is_rejection:
+                    strength = min(100, lower_wick_pct + (20 if is_bullish_body else 0))
+                
+                return {
+                    'is_rejection': is_rejection,
+                    'wick_pct': wick_pct,
+                    'body_pct': body_pct,
+                    'strength': strength
+                }
+            
+            elif direction == "SHORT":
+                # Bearish rejection: long upper wick, bearish body, body in lower part
+                is_bearish_body = candle_close < candle_open
+                is_upper_wick_long = upper_wick_pct >= 40.0
+                is_body_lower = body_position_pct <= 60.0  # Body not in highest 40%
+                
+                is_rejection = is_bearish_body and is_upper_wick_long and is_body_lower
+                wick_pct = upper_wick_pct
+                
+                # Calculate strength (0-100)
+                strength = 0
+                if is_rejection:
+                    strength = min(100, upper_wick_pct + (20 if is_bearish_body else 0))
+                
+                return {
+                    'is_rejection': is_rejection,
+                    'wick_pct': wick_pct,
+                    'body_pct': body_pct,
+                    'strength': strength
+                }
+            
+            return {
+                'is_rejection': False,
+                'wick_pct': 0,
+                'body_pct': 0,
+                'strength': 0
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Rejection candle detection failed: {str(e)}")
+            return {
+                'is_rejection': False,
+                'wick_pct': 0,
+                'body_pct': 0,
+                'strength': 0
+            }
+
+    def validate_1m_confirmation(
+        self,
+        df_1m: pd.DataFrame,
+        signal_type: str,
+        direction: str,
+        level: float
+    ) -> Dict[str, Any]:
+        """
+        Validate signal using 1-minute rejection patterns.
+        
+        Args:
+            df_1m: 1-minute OHLCV DataFrame (last 5-10 candles)
+            signal_type: "SUPPORT_BOUNCE", "RESISTANCE_BOUNCE", etc.
+            direction: "LONG" or "SHORT"
+            level: The key level being tested
+        
+        Returns:
+            {
+                'confirmed': bool,
+                'rejection_count': int,
+                'pattern': str,
+                'strength': float (0-100),
+                'reason': str
+            }
+        
+        Confirmation Rules:
+            - Require 2/3 recent candles showing rejection
+            - Wick size must be >= 40% of candle range
+            - Price must be near the level (within 0.5% tolerance)
+        """
+        try:
+            from config.settings import MIN_REJECTION_CANDLES, MIN_WICK_PERCENTAGE, LEVEL_TOLERANCE_1M
+            
+            if df_1m is None or df_1m.empty:
+                logger.warning("⚠️ 1m confirmation: No 1-minute data available")
+                return {
+                    'confirmed': False,
+                    'rejection_count': 0,
+                    'pattern': 'NO_DATA',
+                    'strength': 0,
+                    'reason': 'No 1-minute data'
+                }
+            
+            # Take last 3-5 candles
+            recent_candles = df_1m.tail(min(5, len(df_1m)))
+            
+            # Check if price is near the level
+            last_candle = recent_candles.iloc[-1]
+            current_price = float(last_candle.get('close', 0))
+            
+            level_tolerance_pct = LEVEL_TOLERANCE_1M if 'LEVEL_TOLERANCE_1M' in dir() else 0.5
+            distance_from_level = abs(current_price - level) / level * 100
+            
+            if distance_from_level > level_tolerance_pct:
+                logger.debug(f"⚠️ 1m confirmation: Price {current_price:.2f} too far from level {level:.2f} ({distance_from_level:.2f}%)")
+                return {
+                    'confirmed': False,
+                    'rejection_count': 0,
+                    'pattern': 'TOO_FAR_FROM_LEVEL',
+                    'strength': 0,
+                    'reason': f'Price {distance_from_level:.2f}% from level (max: {level_tolerance_pct}%)'
+                }
+            
+            # Analyze each candle for rejection
+            rejection_count = 0
+            total_strength = 0
+            rejection_details = []
+            
+            for idx, candle in recent_candles.iterrows():
+                result = self._detect_rejection_candle(candle, direction)
+                
+                if result['is_rejection']:
+                    rejection_count += 1
+                    total_strength += result['strength']
+                    rejection_details.append({
+                        'wick_pct': result['wick_pct'],
+                        'strength': result['strength']
+                    })
+            
+            # Determine if confirmed
+            min_rejections = MIN_REJECTION_CANDLES if 'MIN_REJECTION_CANDLES' in dir() else 2
+            required_out_of = 3
+            
+            is_confirmed = rejection_count >= min_rejections
+            
+            # Calculate average strength
+            avg_strength = total_strength / rejection_count if rejection_count > 0 else 0
+            
+            # Determine pattern
+            if is_confirmed:
+                pattern = f"{rejection_count}/{required_out_of}_REJECTION"
+            else:
+                pattern = f"WEAK_{rejection_count}/{required_out_of}"
+            
+            # Create reason string
+            if is_confirmed:
+                reason = f"{rejection_count} rejection candles detected (avg wick: {avg_strength:.1f}%)"
+            else:
+                reason = f"Only {rejection_count} rejection candles (need {min_rejections})"
+            
+            logger.info(
+                f"{'✅' if is_confirmed else '❌'} 1m Confirmation: {direction} signal | "
+                f"Rejections: {rejection_count}/{required_out_of} | "
+                f"Strength: {avg_strength:.1f}% | "
+                f"Distance from level: {distance_from_level:.2f}%"
+            )
+            
+            return {
+                'confirmed': is_confirmed,
+                'rejection_count': rejection_count,
+                'pattern': pattern,
+                'strength': avg_strength,
+                'reason': reason,
+                'details': rejection_details
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ 1m confirmation failed: {str(e)}")
+            return {
+                'confirmed': False,
+                'rejection_count': 0,
+                'pattern': 'ERROR',
+                'strength': 0,
+                'reason': f'Error: {str(e)}'
+            }
 
     def _is_choppy_session(self, df: pd.DataFrame) -> Tuple[bool, str]:
         """

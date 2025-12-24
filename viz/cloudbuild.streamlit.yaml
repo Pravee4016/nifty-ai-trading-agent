@@ -1,0 +1,19 @@
+steps:
+  # Build the container image for Streamlit dashboard
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/nifty-streamlit-dashboard'
+      - '-f'
+      - 'viz/Dockerfile.streamlit'
+      - '.'
+
+  # Push the container image to Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/nifty-streamlit-dashboard'
+
+images:
+  - 'gcr.io/$PROJECT_ID/nifty-streamlit-dashboard'

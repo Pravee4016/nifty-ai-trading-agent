@@ -34,9 +34,13 @@ class FyersOAuthManager:
         # Try environment first (for local development)
         self.access_token = os.getenv("FYERS_ACCESS_TOKEN")
         self.refresh_token = os.getenv("FYERS_REFRESH_TOKEN")
+        self.pin = os.getenv("FYERS_PIN", "")
         
         if self.access_token:
             logger.info(f"📝 Loaded access token from environment (length: {len(self.access_token)})")
+        
+        if self.pin:
+            logger.info("🔑 Fyers PIN found in environment")
         
         if self.refresh_token:
             logger.info(f"📝 Loaded refresh token from environment (length: {len(self.refresh_token)})")
@@ -44,7 +48,7 @@ class FyersOAuthManager:
             logger.info("⚠️ No refresh token in environment, trying Secret Manager...")
             # Try Cloud Secret Manager if in production
             self.refresh_token = self._load_from_secret_manager("fyers-refresh-token")
-        
+            
         if self.refresh_token:
             logger.info("✅ Refresh token available for automatic token refresh")
         else:
@@ -194,7 +198,7 @@ class FyersOAuthManager:
                 "grant_type": "refresh_token",
                 "appIdHash": app_id_hash,
                 "refresh_token": self.refresh_token,
-                "pin": ""  # PIN not required for refresh
+                "pin": self.pin
             }
             
             logger.info("🔄 Attempting to refresh Fyers access token...")
@@ -244,9 +248,17 @@ class FyersOAuthManager:
                 logger.error("❌ No refresh token available - need to re-authorize")
                 return None
         
-        # Check if token is expired or about to expire (conservative: within 1 hour)
-        # Note: We don't track expiry initially, so always try to refresh on first use
-        if self.token_expiry is None or datetime.now() >= self.token_expiry - timedelta(hours=1):
+        # Conservative: within 1 hour
+        # TRUST THE TOKEN: If we have an access_token but token_expiry is None,
+        # it means we just loaded it from .env. Trust it for the first hour 
+        # instead of immediately trying to refresh it (which might fail).
+        if self.token_expiry is None:
+            # Set a default expiry 12 hours from now for tokens loaded from env
+            self.token_expiry = datetime.now() + timedelta(hours=12)
+            logger.info("💎 Trusting existing access token for 12 hours")
+            return self.access_token
+
+        if datetime.now() >= self.token_expiry - timedelta(hours=1):
             logger.info("🔄 Access token may be expired, attempting refresh...")
             if self.refresh_token:
                 success, message = self.refresh_access_token()

@@ -103,11 +103,21 @@ def main():
 
     stats = agent.get_statistics()
     logger.info("\n📈 STATISTICS")
-    logger.info(f"   Signals: {stats['signals_generated']}")
-    logger.info(f"   Alerts Sent: {stats['alerts_sent']}")
-    logger.info(
-        f"   AI Usage: {stats['ai_usage']['tokens_used']} tokens used"
-    )
+    logger.info(f"Alerts Sent: {stats['alerts_sent']}")
+    logger.info(f"ML Predictions: {stats.get('ml_predictions', 0)}")
+    
+    # Handle AI usage stats (supports both old Groq format and new factory format)
+    ai_usage = stats.get('ai_usage', {})
+    if ai_usage:
+        # Check if it's the new hybrid/factory format
+        if 'mode' in ai_usage:
+            logger.info(f" AI Mode: {ai_usage['mode']}")
+        # Try to get tokens used (may not exist for all providers)
+        tokens = ai_usage.get('tokens_used', 'N/A')
+        if tokens != 'N/A':
+            logger.info(f" AI Usage: {tokens} tokens used")
+    
+    logger.info(f"Session Time: {stats.get('execution_time', 0):.2f}s")
 
 
 def cloud_function_handler(request):

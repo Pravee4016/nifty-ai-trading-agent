@@ -1,9 +1,13 @@
 
+
 import logging
 import os
 from typing import Dict, Optional, Any
 from fyers_apiv3 import fyersModel
 import time
+import pandas as pd
+from datetime import datetime, timedelta
+import pytz
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +29,8 @@ class FyersApp:
         self.mapper = {
             "NIFTY": "NSE:NIFTY50-INDEX",
             "BANKNIFTY": "NSE:NIFTYBANK-INDEX",
-            "FINNIFTY": "NSE:FINNIFTY-INDEX"
+            "FINNIFTY": "NSE:FINNIFTY-INDEX",
+            "NSE:INDIAVIX-INDEX": "NSE:INDIAVIX-INDEX"
         }
         
         # Try to use OAuth if available
@@ -181,6 +186,123 @@ class FyersApp:
         except Exception as e:
             logger.error(f"❌ Exception fetching quote: {e}")
             return None
+
+    def get_historical_candles(
+        self,
+        symbol: str,
+        resolution: str = "1",
+        bars: int = 10
+    ) -> Optional[pd.DataFrame]:
+        """
+        Fetch historical candles from Fyers API.
+        
+        Args:
+            symbol: Common symbol name (e.g., "NIFTY", "BANKNIFTY")
+            resolution: "1" (1m), "5" (5m), "15" (15m), "30" (30m), "60" (1h), "D" (daily)
+            bars: Number of candles to fetch
+        
+        Returns:
+            DataFrame with columns: ['datetime', 'open', 'high', 'low', 'close', 'volume']
+            or None if fetch fails
+        """
+        if not self.fyers:
+            self.initialize_session()
+            if not self.fyers:
+                logger.debug("Fyers not available, caller should use yfinance fallback")
+                return None
+        
+        # Validate session
+        if not self.validate_session():
+            logger.warning("⚠️ Fyers session invalid for history fetch")
+            if not self.refresh_token_from_env():
+                return None
+        
+        fyers_symbol = self.mapper.get(symbol)
+        if not fyers_symbol:
+            logger.error(f"❌ Unknown symbol for Fyers: {symbol}")
+            return None
+        
+        try:
+            # Calculate date range based on resolution and bars
+            ist = pytz.timezone('Asia/Kolkata')
+            end_time = datetime.now(ist)
+            
+            # Calculate start time based on resolution and bars needed
+            resolution_minutes = {
+                "1": 1,
+                "5": 5,
+                "15": 15,
+                "30": 30,
+                "60": 60,
+                "D": 1440  # Daily
+            }
+            
+            minutes_needed = resolution_minutes.get(resolution, 5) * bars
+            
+            # For intraday data (1m, 5m, 15m, etc.), use day-based range
+            # to account for market hours (09:15-15:30 IST = ~6 hours)
+            if resolution in ["1", "5", "15", "30", "60"]:
+                # Use 2-3 days lookback for intraday to ensure enough candles
+                start_time = end_time - timedelta(days=3)
+            else:
+                # For daily data
+                start_time = end_time - timedelta(days=bars * 2)
+            
+            # Fyers API requires date strings in YYYY-MM-DD format when date_format=1
+            range_from = start_time.strftime("%Y-%m-%d")
+            range_to = end_time.strftime("%Y-%m-%d")
+            
+            data = {
+                "symbol": fyers_symbol,
+                "resolution": resolution,
+                "date_format": "1",  # Date format: YYYY-MM-DD
+                "range_from": range_from,
+                "range_to": range_to
+                # cont_flag removed - may cause "Invalid input" for intraday
+            }
+            
+            # Debug: Log API call details
+            logger.info(f"📊 Fyers API Call | Symbol: {symbol} → {fyers_symbol} | Resolution: {resolution} | Bars: {bars}")
+            logger.info(f"   Date Range: {start_time.strftime('%Y-%m-%d %H:%M')} to {end_time.strftime('%Y-%m-%d %H:%M')}")
+            logger.info(f"   Timestamps: {range_from} to {range_to}")
+            logger.info(f"   API Data: {data}")
+            
+            response = self.fyers.history(data=data)
+            
+            if response.get("s") != "ok":
+                logger.error(f"❌ Fyers history API error: {response.get('message', 'Unknown')}")
+                logger.error(f"   Full response: {response}")
+                return None
+            
+            # Parse response
+            candles = response.get("candles", [])
+            
+            if not candles:
+                logger.warning(f"⚠️ No candles returned from Fyers for {symbol}")
+                return None
+            
+            # Convert to DataFrame
+            # Fyers candles format: [timestamp, open, high, low, close, volume]
+            df = pd.DataFrame(candles, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            
+            # Convert timestamp to datetime (IST)
+            df['datetime'] = pd.to_datetime(df['timestamp'], unit='s', utc=True)
+            df['datetime'] = df['datetime'].dt.tz_convert(ist)
+            
+            # Drop timestamp column, reorder
+            df = df[['datetime', 'open', 'high', 'low', 'close', 'volume']]
+            
+            # Take only the requested number of bars (most recent)
+            df = df.tail(bars)
+            
+            logger.info(f"✅ Fetched {len(df)} {symbol} candles from Fyers (resolution: {resolution})")
+            
+            return df
+            
+        except Exception as e:
+            logger.error(f"❌ Exception fetching Fyers historical data: {e}")
+            return None
+
 
 if __name__ == "__main__":
     # Test Block

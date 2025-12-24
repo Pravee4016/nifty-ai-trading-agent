@@ -70,6 +70,10 @@ class OptionChainFetcher:
         # ----------------------------------------
         data = self.fetch_fyers_data(instrument)
         if data:
+            # CRITICAL: Add timestamp for staleness validation
+            data['fetch_timestamp'] = time.time()
+            data['fetch_age_seconds'] = 0
+            
             self.cache[cache_key] = data
             self.cache_time[cache_key] = time.time()
             # Store as emergency backup
@@ -104,6 +108,10 @@ class OptionChainFetcher:
             # Validate Data
             if "records" not in data or "data" not in data.get("records", {}):
                 raise ValueError("Invalid NSE data structure (missing records)")
+
+            # CRITICAL: Add timestamp for staleness validation
+            data['fetch_timestamp'] = time.time()
+            data['fetch_age_seconds'] = 0
 
             # Cache result
             self.cache[cache_key] = data

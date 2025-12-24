@@ -3,7 +3,7 @@ import unittest
 import logging
 from unittest.mock import MagicMock, patch
 from analysis_module.option_chain_analyzer import OptionChainAnalyzer
-from main import NiftyTradingAgent
+from app.agent import NiftyTradingAgent
 
 # Configure logging to show info during tests
 logging.basicConfig(level=logging.INFO)

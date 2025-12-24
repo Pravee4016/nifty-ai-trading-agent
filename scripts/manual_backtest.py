@@ -15,7 +15,7 @@ os.environ["DEPLOYMENT_MODE"] = "LOCAL"
 os.environ["SEND_TEST_ALERTS"] = "True"
 os.environ["LOGLEVEL"] = "INFO"
 
-from main import NiftyTradingAgent
+from app.agent import NiftyTradingAgent
 from data_module.persistence import PersistenceManager
 from config.settings import TIME_ZONE, INSTRUMENTS
 
@@ -69,15 +69,25 @@ def run_backtest():
             captured_alerts = []
 
             def capture_alert(msg):
-                captured_alerts.append(f"MSG: {msg}")
+                captured_alerts.append({"type": "MSG", "content": msg, "time": current_sim_time})
                 return True
             
             def capture_breakout(signal):
-                captured_alerts.append(f"BREAKOUT: {signal.get('symbol', 'NIFTY')} @ {signal.get('price_level')} ({signal.get('signal_type')})")
+                captured_alerts.append({
+                    "type": "BREAKOUT",
+                    "instrument": signal.get("instrument", "NIFTY"),
+                    "signal": signal,
+                    "time": current_sim_time
+                })
                 return True
 
             def capture_retest(signal):
-                captured_alerts.append(f"RETEST: {signal.get('instrument', 'NIFTY')} @ {signal.get('price_level')} ({signal.get('signal_type')})")
+                captured_alerts.append({
+                    "type": "RETEST",
+                    "instrument": signal.get("instrument", "NIFTY"),
+                    "signal": signal,
+                    "time": current_sim_time
+                })
                 return True
 
             mock_bot_instance.send_message.side_effect = capture_alert
@@ -88,15 +98,26 @@ def run_backtest():
             agent = NiftyTradingAgent()
             agent.persistence = mock_persist.return_value
             agent.telegram_bot = mock_bot_instance # Force inject mock
+            
+            # Clear memory to prevent interference from real-world alerts
+            agent.recent_alerts = {}
+            agent.daily_level_memory = set()
+            logger.info("🧹 Agent memory cleared for backtest simulation")
 
         # 2. Fetch 'Real' Data for Today ONCE
-        logger.info("📥 Fetching market data (1 Month)...")
+        logger.info("📥 Fetching market data (Multi-Timeframe)...")
+        data_cache = {}
         try:
-            df_5m_full = agent.fetcher.fetch_historical_data("NIFTY", period="1mo", interval="5m")
-            if df_5m_full is None or df_5m_full.empty:
-                logger.error("❌ No data fetched. Market might be closed or API down.")
-                return
-            df_5m_full = agent.fetcher.preprocess_ohlcv(df_5m_full)
+            for interval in ["5m", "15m", "1d"]:
+                period = "1mo" if interval != "1d" else "3mo"
+                df = agent.fetcher.fetch_historical_data("NIFTY", period=period, interval=interval)
+                if df is None or df.empty:
+                    logger.error(f"❌ No {interval} data fetched.")
+                    return
+                data_cache[interval] = agent.fetcher.preprocess_ohlcv(df)
+            
+            # Use 5m to get target date
+            df_5m_full = data_cache["5m"]
         except Exception as e:
             logger.error(f"❌ Initial fetch failed: {e}")
             return
@@ -118,29 +139,24 @@ def run_backtest():
         agent.option_fetcher.fetch_option_chain = MagicMock(return_value=None) # Skip options for speed
         
         while current_sim_time <= end_time:
-            # Patch datetime in both main and technical module
+            # Patch datetime in all relevant modules
             with patch('main.datetime') as mock_datetime_main, \
+                 patch('app.agent.datetime') as mock_datetime_agent, \
                  patch('analysis_module.technical.datetime') as mock_datetime_tech, \
+                 patch('analysis_module.signal_pipeline.datetime') as mock_datetime_pipeline, \
                  patch('analysis_module.manipulation_guard.datetime') as mock_datetime_guard:
                 
-                # Configure Mock for Main
-                mock_datetime_main.now.return_value = current_sim_time
-                mock_datetime_main.strptime = datetime.strptime
-                
-                # Configure Mock for Technical (must allow .now(tz) calls)
-                # handle datetime.now(tz) by returning sim_time converted to tz
                 def mocked_now(tz=None):
                     if tz:
                         return current_sim_time.astimezone(tz)
                     return current_sim_time
-                
-                mock_datetime_tech.now.side_effect = mocked_now
-                mock_datetime_tech.strptime = datetime.strptime
 
-                # Configure Mock for Manipulation Guard
-                mock_datetime_guard.now.side_effect = mocked_now
-                mock_datetime_guard.strptime = datetime.strptime
-                mock_datetime_guard.fromtimestamp = datetime.fromtimestamp
+                # Configure Mocks
+                for m in [mock_datetime_main, mock_datetime_agent, mock_datetime_tech, mock_datetime_pipeline, mock_datetime_guard]:
+                    m.now.side_effect = mocked_now
+                    m.strptime = datetime.strptime
+                    if hasattr(m, 'fromtimestamp'):
+                        m.fromtimestamp = datetime.fromtimestamp
                 
                 print(f"\n⏳ Simulation Time: {current_sim_time.strftime('%H:%M')}")
 
@@ -166,8 +182,27 @@ def run_backtest():
                         last_row_time = current_slice.index[-1]
                         print(f"DEBUG: SimTime={current_sim_time} | DataTime={last_row_time} | Price={current_slice.iloc[-1]['close']}")
 
-                        # Mock historical data return
-                        agent.fetcher.fetch_historical_data = MagicMock(return_value=current_slice)
+                        # Mock historical data return based on interval
+                        def mocked_fetch_hist(symbol, period=None, interval="5m"):
+                            # Map interval to cache key
+                            key = interval
+                            if interval not in data_cache:
+                                # Fallback or mapping
+                                if interval == "1day": key = "1d"
+                                else: key = "5m"
+                            
+                            full_df = data_cache.get(key)
+                            if full_df is not None:
+                                # Ensure index is localized to IST for comparison
+                                if full_df.index.tz is None:
+                                    full_df.index = full_df.index.tz_localize('UTC').tz_convert(TIME_ZONE)
+                                elif str(full_df.index.tz) != TIME_ZONE:
+                                    full_df.index = full_df.index.tz_convert(TIME_ZONE)
+                                
+                                return full_df[full_df.index <= current_sim_time]
+                            return pd.DataFrame()
+
+                        agent.fetcher.fetch_historical_data = MagicMock(side_effect=mocked_fetch_hist)
                         
                         # Mock Live Price from last candle close
                         last_close = current_slice.iloc[-1]['close']
@@ -177,7 +212,16 @@ def run_backtest():
                             "timestamp": current_sim_time.isoformat()
                         }
                         
-                        agent.run_analysis()
+                        results = agent.run_analysis()
+                        
+                        # Periodic diagnostic logging (every 30 mins)
+                        if current_sim_time.minute % 30 == 0:
+                            for inst in ["NIFTY"]:
+                                ctx = agent.market_context.get(inst, {})
+                                trend = ctx.get("trend_15m", "N/A")
+                                rsi = ctx.get("rsi_15", "N/A")
+                                rsi_thresh = ctx.get("rsi_long_threshold", "N/A")
+                                print(f"🔍 [DIAGNOSTIC] {inst} @ {current_sim_time.strftime('%H:%M')} | Price: {last_close:.2f} | Trend15m: {trend} | RSI15: {rsi} | Thresh: {rsi_thresh}")
                 
                 # 3c. Check Market Closed Alert
                 if current_sim_time.time() >= time(15, 30):
@@ -190,15 +234,26 @@ def run_backtest():
     logger.info("✅ Backtest Complete")
     
     print("\n" + "="*50)
-    print("📊 BACKTEST SUMMARY (TODAY)")
-    print("="*50)
+    print("\n" + "="*80)
+    print(f"{'TIME':<10} | {'INSTRUMENT':<10} | {'SIGNAL':<20} | {'PRICE':<10} | {'CONF':<5} | {'RR':<5}")
+    print("-" * 80)
     if captured_alerts:
-        print(f"Total Alerts: {len(captured_alerts)}")
-        for i, alert in enumerate(captured_alerts, 1):
-            print(f"{i}. {alert}")
+        for alert in captured_alerts:
+            if alert["type"] == "MSG":
+                continue 
+            sig = alert["signal"]
+            t = alert["time"].strftime("%H:%M")
+            inst = sig.get("instrument", "NIFTY")
+            stype = sig.get("signal_type", "N/A")
+            price = sig.get("entry_price", sig.get("price_level", 0))
+            conf = sig.get("confidence", 0)
+            rr = sig.get("risk_reward_ratio", 0)
+            
+            print(f"{t:<10} | {inst:<10} | {stype:<20} | {price:<10.2f} | {conf:<5} | {rr:<5.2f}")
+            print(f"   ↳ {sig.get('description', '')}")
     else:
         print("No alerts generated.")
-    print("="*50 + "\n")
+    print("="*80 + "\n")
 
 if __name__ == "__main__":
     run_backtest()

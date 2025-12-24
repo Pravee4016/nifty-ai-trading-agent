@@ -1,0 +1,20 @@
+metrics:
+  - name: "trading_agent/vix_value"
+    type: "GAUGE"
+    description: "Current India VIX value"
+    
+  - name: "trading_agent/rsi_threshold_long"
+    type: "GAUGE"
+    description: "Adaptive RSI long threshold"
+    
+  - name: "trading_agent/rsi_threshold_short"
+    type: "GAUGE"
+    description: "Adaptive RSI short threshold"
+    
+  - name: "trading_agent/signals_generated"
+    type: "COUNTER"
+    description: "Total signals generated"
+    
+  - name: "trading_agent/win_rate"
+    type: "GAUGE"
+    description: "Current win rate percentage"

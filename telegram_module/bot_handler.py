@@ -166,14 +166,18 @@ class TelegramBot:
         verdict = ai_data.get("verdict", "N/A")
         reasoning = ai_data.get("reasoning", "No details")
         ai_conf = ai_data.get("confidence", 0)
+        ai_provider = ai_data.get("ai_provider", "GROQ")  # Default to GROQ if not specified
         
         # Check for legacy schema fallback
         if "recommendation" in ai_data:
             verdict = ai_data.get("recommendation")
             reasoning = ai_data.get("summary")
+        
+        # Provider emoji
+        provider_emoji = "🔮" if ai_provider == "VERTEX" else "🧠"
 
         return (
-            f"🤖 <b>AI Analyst Review</b>\n"
+            f"🤖 <b>AI Analyst Review</b> ({provider_emoji} {ai_provider})\n"
             f"• Verdict: {verdict} ({ai_conf}%)\n"
             f"• Logic: <i>{reasoning}</i>\n"
         )
@@ -226,7 +230,8 @@ class TelegramBot:
             return self.send_message(message)
 
         except Exception as e:
-            logger.error(f"❌ Failed to format breakout alert: {str(e)}")
+            logger.error(f"❌ Failed to format breakout alert: {str(e)}", exc_info=True)
+            logger.error(f"   Signal data causing error: {signal}")
             return False
 
     def send_false_breakout_alert(self, signal: Dict) -> bool:
@@ -310,7 +315,8 @@ class TelegramBot:
             return self.send_message(message)
 
         except Exception as e:
-            logger.error(f"❌ Failed to format retest alert: {str(e)}")
+            logger.error(f"❌ Failed to format retest alert: {str(e)}", exc_info=True)
+            logger.error(f"   Signal data causing error: {signal}")
             return False
 
     def send_inside_bar_alert(self, signal: Dict) -> bool:
@@ -360,8 +366,9 @@ class TelegramBot:
 
         except Exception as e:
             logger.error(
-                f"❌ Failed to format inside bar alert: {str(e)}"
+                f"❌ Failed to format inside bar alert: {str(e)}", exc_info=True
             )
+            logger.error(f"   Signal data causing error: {signal}")
             return False
 
     # =====================================================================
@@ -559,8 +566,10 @@ class TelegramBot:
                         r_levels = getattr(sr, 'resistance_levels', [])
 
                     # Show top 3 supports and resistances
-                    supports = sorted(s_levels)[-3:] if s_levels else []
-                    resistances = sorted(r_levels)[:3] if r_levels else []
+                    # Support = price floor BELOW current price = LOWEST values
+                    # Resistance = price ceiling ABOVE current price = HIGHEST values
+                    supports = sorted(s_levels)[:3] if s_levels else []  # Take FIRST 3 (lowest)
+                    resistances = sorted(r_levels)[-3:] if r_levels else []  # Take LAST 3 (highest)
                     
                     if supports:
                         message += f"📊 Supports: {', '.join([f'{s:.2f}' for s in supports])}\n"

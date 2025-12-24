@@ -1,0 +1,9 @@
+# Requirements for retrain Cloud Function
+lightgbm>=4.1.0
+scikit-learn>=1.3.0
+google-cloud-firestore>=2.11.0
+google-cloud-storage>=2.10.0
+pandas>=2.0.3
+numpy>=1.24.3
+python-dateutil==2.8.2
+pytz==2023.3

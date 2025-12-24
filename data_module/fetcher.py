@@ -20,6 +20,7 @@ from config.settings import (
     INSTRUMENTS,
     DEBUG_MODE,
     FYERS_CLIENT_ID,
+    FYERS_SECRET_ID,
 )
 from data_module.fyers_interface import FyersApp
 
@@ -44,8 +45,8 @@ class DataFetcher:
         self.cache: Dict[str, Dict] = {}
         self.cache_time: Dict[str, float] = {}
 
-        # Initialize Fyers App
-        self.fyers_app = FyersApp(app_id=FYERS_CLIENT_ID)
+        # Initialize Fyers App with OAuth support
+        self.fyers_app = FyersApp(app_id=FYERS_CLIENT_ID, secret_id=FYERS_SECRET_ID)
         
         logger.info(f"🚀 DataFetcher initialized | Primary: Fyers | Fallback: YFinance")
 
@@ -171,6 +172,7 @@ class DataFetcher:
         try:
             quote = self.fyers_app.get_quote(instrument)
             if not quote:
+                self._send_fyers_failure_notification()
                 return None
             
             # Debug Fyers structure
@@ -204,6 +206,7 @@ class DataFetcher:
             }
         except Exception as e:
             logger.error(f"❌ Fyers fetch error: {e}")
+            self._send_fyers_failure_notification()
             return None
 
     def _fetch_yfinance_snapshot(self, instrument: str) -> Optional[Dict]:
@@ -289,6 +292,13 @@ class DataFetcher:
                 )
                 return None
 
+            # Flatten multi-level columns if present (yfinance returns ('Close', '^NSEI') format)
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            
+            # Convert column names to lowercase for consistent access
+            df.columns = df.columns.str.lower()
+
             logger.info(
                 f"✅ Historical data fetched: {instrument} | {len(df)} candles"
             )
@@ -328,6 +338,111 @@ class DataFetcher:
             # Return last N bars
             return df.tail(bars)
         return df
+
+    def fetch_1m_data(
+        self,
+        instrument: str,
+        bars: int = 10
+    ) -> Optional[pd.DataFrame]:
+        """
+        Fetch last N 1-minute candles for signal confirmation.
+        Priority: Fyers → yfinance fallback
+        
+        Args:
+            instrument: 'NIFTY', 'BANKNIFTY', or 'FINNIFTY'
+            bars: Number of 1-minute candles to fetch
+        
+        Returns:
+            DataFrame with OHLCV + datetime or None
+        """
+        # Check cache first (60 second TTL for 1-minute data)
+        cache_key = f"1m_{instrument}_{bars}"
+        if self._is_cache_valid(cache_key, ttl=60):
+            logger.debug(f"📦 Using cached 1-minute data for {instrument}")
+            return self.cache[cache_key]
+        
+        # 1. Try Fyers API first (most accurate for NSE data)
+        if self.fyers_app and self.fyers_app.fyers:
+            df_fyers = self.fyers_app.get_historical_candles(
+                symbol=instrument,
+                resolution="1",  # 1-minute
+                bars=bars
+            )
+            
+            if df_fyers is not None and not df_fyers.empty:
+                logger.info(f"✅ Fetched {len(df_fyers)} 1m candles from Fyers for {instrument}")
+                # Standardize columns to lowercase
+                df_fyers.columns = df_fyers.columns.str.lower()
+                # Cache it
+                self.cache[cache_key] = df_fyers
+                self.cache_time[cache_key] = time.time()
+                return df_fyers
+        
+        # 2. Fallback to yfinance
+        logger.warning(f"⚠️ Fyers 1m data unavailable, falling back to yfinance for {instrument}")
+        
+        try:
+            symbol_map = {
+                "NIFTY": "^NSEI",
+                "BANKNIFTY": "^NSEBANK",
+                "FINNIFTY": "^NSEINFRA",
+            }
+            
+            yf_symbol = symbol_map.get(instrument)
+            if not yf_symbol:
+                logger.error(f"❌ Unknown instrument for yfinance: {instrument}")
+                return None
+            
+            # Fetch 1-minute data (last 60 minutes to ensure we get enough bars)
+            df = yf.download(
+                yf_symbol,
+                period="1d",
+                interval="1m",
+                progress=False,
+                prepost=False,
+                auto_adjust=True
+            )
+            
+            if df.empty:
+                logger.warning(f"⚠️ No 1m data from yfinance for {instrument}")
+                return None
+            
+            # Flatten multi-level columns FIRST (before reset_index)
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            
+            # Reset index to get datetime as column
+            df = df.reset_index()
+            
+            # Now lowercase all columns
+            df.columns = df.columns.str.lower()
+            
+            # Handle various date column names from yfinance
+            for date_col in ['date', 'datetime', 'timestamp']:
+                if date_col in df.columns:
+                    df = df.rename(columns={date_col: 'datetime'})
+                    break
+            
+            # Ensure we have datetime column
+            if 'datetime' not in df.columns and len(df.columns) > 0:
+                # If still no datetime, use index
+                df['datetime'] = df.index
+            
+            # Take last N bars
+            df = df.tail(bars)
+            
+            logger.info(f"✅ Fetched {len(df)} 1m candles from yfinance for {instrument}")
+            
+            # Cache it
+            self.cache[cache_key] = df
+            self.cache_time[cache_key] = time.time()
+            
+            return df
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to fetch 1m data from yfinance: {e}")
+            return None
+
 
     def get_previous_day_stats(self, instrument: str) -> Optional[Dict]:
         """
@@ -484,6 +599,42 @@ class DataFetcher:
         except Exception as e:
             logger.error(f"❌ Preprocessing failed: {str(e)}")
             return df
+    
+    def _send_fyers_failure_notification(self):
+        """Send Telegram notification when Fyers fails (once per day)."""
+        try:
+            from data_module.persistence import get_persistence
+            
+            persistence = get_persistence()
+            stats = persistence.get_daily_stats()
+            
+            # Check if we've already sent the alert today
+            if stats.get("fyers_failure_alert_sent"):
+                return
+            
+            # Import here to avoid circular dependency
+            from telegram_module.bot_handler import get_bot
+            
+            message = (
+                "⚠️ <b>Fyers API Failure Alert</b>\n\n"
+                "Fyers API authentication has failed. The system is automatically using yfinance as a fallback.\n\n"
+                "<b>Action Required:</b>\n"
+                "1. Go to https://myapi.fyers.in/dashboard\n"
+                "2. Generate a new Access Token\n"
+                "3. Update Secret Manager:\n\n"
+                "<code>echo -n 'YOUR_NEW_TOKEN' | gcloud secrets versions add fyers-access-token --data-file=-</code>\n\n"
+                "📊 <i>Note: Trading continues normally with yfinance data</i>"
+            )
+            
+            bot = get_bot()
+            bot.send_message(message)
+            
+            # Mark as sent for today
+            persistence.increment_stat("fyers_failure_alert_sent")
+            logger.info("📨 Sent Fyers failure Telegram notification")
+            
+        except Exception as e:
+            logger.debug(f"Failed to send Fyers notification: {e}")
 
     # =====================================================================
     # SAVE / LOAD CSV (for debugging/backtesting)

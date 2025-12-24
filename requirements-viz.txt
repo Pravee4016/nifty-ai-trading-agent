@@ -1,0 +1,21 @@
+# Visualization Dashboard Dependencies
+# Install with: pip install -r requirements-viz.txt
+
+# Streamlit Dashboard
+streamlit>=1.29.0
+
+# Interactive Charting
+plotly>=5.18.0
+
+# Dash Production Dashboard
+dash>=2.14.0
+dash-bootstrap-components>=1.5.0
+
+# Image Export
+kaleido>=0.2.1
+
+# Data Manipulation (should already be installed)
+pandas>=2.0.3
+
+# Styling support for pandas DataFrames
+matplotlib>=3.7.0

@@ -25,7 +25,7 @@ from config.settings import (
 from data_module.fetcher import get_data_fetcher, DataFetcher
 from analysis_module.signal_pipeline import SignalPipeline
 from analysis_module.technical import TechnicalAnalyzer, Signal, TechnicalLevels
-from ai_module.groq_analyzer import get_analyzer, GroqAnalyzer
+from ai_module.ai_factory import get_default_analyzer  # AI provider abstraction (Groq/Vertex/Hybrid)
 from telegram_module.bot_handler import get_bot, TelegramBotHandler, format_signal_message
 from data_module.persistence import get_persistence
 from data_module.persistence_models import AlertKey, build_alert_key
@@ -61,14 +61,31 @@ class NiftyTradingAgent:
         self.trade_tracker = TradeTracker()
         self.bot_handler = TelegramBotHandler()
         self.telegram_bot = self.bot_handler  # Alias for consistency
-        self.groq_analyzer = GroqAnalyzer()
-        self.ai_analyzer = self.groq_analyzer # Alias for compatibility
+        self.ai_analyzer = get_default_analyzer()  # Uses AI_PROVIDER from settings (Groq/Vertex/Hybrid)
         self.persistence = get_persistence()
         self.option_fetcher = OptionChainFetcher()
         self.circuit_breaker = CircuitBreaker()
         
+        # Initialize ML Data Collector (if USE_ML_FILTERING enabled)
+        self.ml_data_collector = None
+        from config.settings import USE_ML_FILTERING
+        if USE_ML_FILTERING:
+            try:
+                from data_module.ml_data_collector import MLDataCollector
+                from data_module.persistence import get_firestore_client
+                db = get_firestore_client()
+                self.ml_data_collector = MLDataCollector(db)
+                logger.info("✅ ML data collector initialized")
+            except Exception as e:
+                logger.warning(f"⚠️ ML data collector failed: {e}")
+        
         # Initialize Signal Pipeline
-        self.signal_pipeline = SignalPipeline(groq_analyzer=self.groq_analyzer)
+        self.signal_pipeline = SignalPipeline(groq_analyzer=self.ai_analyzer)  # ai_analyzer works with any provider
+        
+        # Initialize Signal Failure Detector (NEW)
+        from data_module.signal_failure_detector import SignalFailureDetector
+        self.failure_detector = SignalFailureDetector(self.persistence)
+        logger.info("✅ Signal Failure Detector initialized")
         
         self.signals_generated: List[Dict] = []
         self.alerts_sent = 0
@@ -131,6 +148,8 @@ class NiftyTradingAgent:
                 logger.info(f"\n🔍 Analyzing: {instrument}")
                 logger.info("-" * 70)
 
+                self._check_failing_signals(instrument) 
+
                 instrument_result = self._analyze_single_instrument(instrument)
                 results["details"][instrument] = instrument_result
 
@@ -186,6 +205,21 @@ class NiftyTradingAgent:
             df_daily = self.fetcher.fetch_historical_data(
                 instrument, period="5d", interval="1d"
             )
+            
+            # NEW: Fetch 1-minute data if feature enabled
+            from config.settings import USE_1M_ANALYSIS, CANDLES_PER_ANALYSIS
+            df_1m = None
+            if USE_1M_ANALYSIS:
+                logger.info(f"📊 1-minute analysis enabled, fetching {CANDLES_PER_ANALYSIS + 5} x 1m candles...")
+                # Fetch extra candles for historical context
+                df_1m = self.fetcher.fetch_1m_data(instrument, bars=CANDLES_PER_ANALYSIS + 5)
+                if df_1m is not None and not df_1m.empty:
+                    df_1m = self.fetcher.preprocess_ohlcv(df_1m)
+                    logger.info(f"✅ Fetched {len(df_1m)} x 1-minute candles from Fyers")
+                else:
+                    logger.warning("⚠️ 1m data fetch failed, falling back to 5m analysis")
+                    df_1m = None
+
 
             if df_5m is None or df_5m.empty:
                 logger.error("❌ No 5m historical data available")
@@ -222,7 +256,7 @@ class NiftyTradingAgent:
                 logger.info(f"📊 India VIX: {india_vix:.2f}")
 
             analyzer = TechnicalAnalyzer(instrument)
-            higher_tf_context = analyzer.get_higher_tf_context(df_15m, df_5m, df_daily)
+            higher_tf_context = analyzer.get_higher_tf_context(df_15m, df_5m, df_daily, india_vix=india_vix)
             
             # Add VIX to context for adaptive thresholds
             higher_tf_context["india_vix"] = india_vix
@@ -232,17 +266,34 @@ class NiftyTradingAgent:
                 "trend_5m": higher_tf_context.get("trend_5m", "NEUTRAL"),
                 "trend_15m": higher_tf_context.get("trend_15m", "NEUTRAL"),
                 "trend_daily": higher_tf_context.get("trend_daily", "NEUTRAL"),
+                "rsi_15": higher_tf_context.get("rsi_15", 50.0),
+                "rsi_long_threshold": higher_tf_context.get("rsi_long_threshold", 60.0),
+                "rsi_short_threshold": higher_tf_context.get("rsi_short_threshold", 40.0),
                 "volatility_score": higher_tf_context.get("volatility_score", 0),
                 "pdh": higher_tf_context.get("pdh", 0),
                 "pdl": higher_tf_context.get("pdl", 0),
                 "last_price": current_price
             }
             
+            # NEW: Choose which timeframe to analyze based on feature flag
+            if USE_1M_ANALYSIS and df_1m is not None and len(df_1m) >= CANDLES_PER_ANALYSIS:
+                # Use 1-minute data for analysis
+                logger.info(f"🔬 Analyzing last {CANDLES_PER_ANALYSIS} x 1-minute candles...")
+                df_analysis = df_1m.tail(CANDLES_PER_ANALYSIS)
+                analysis_tf = "1m"
+            else:
+                # Fall back to 5-minute data
+                df_analysis = df_5m
+                analysis_tf = "5m"
+                if USE_1M_ANALYSIS:
+                    logger.info("⏭️ Using 5m data (1m data insufficient)")
+            
             analysis = analyzer.analyze_with_multi_tf(
-                df_5m, higher_tf_context, df_15m=df_15m
+                df_analysis, higher_tf_context, df_15m=df_15m
             )
             # Inject context for signal generation
             analysis["higher_tf_context"] = higher_tf_context
+            analysis["timeframe"] = analysis_tf
             
             # Check and auto-close open trades based on current price
             current_price = market_data.get("lastPrice", 0)
@@ -251,7 +302,7 @@ class NiftyTradingAgent:
                 if closed > 0:
                     logger.info(f"   ✅ Auto-closed {closed} trade(s) for {instrument}")
 
-            signals = self._generate_signals(instrument, analysis, market_data, df_5m)
+            signals = self._generate_signals(instrument, analysis, market_data, df_analysis)
 
             enriched_signals = []
             for sig in signals:
@@ -262,7 +313,7 @@ class NiftyTradingAgent:
                         else "DOWN"
                     )
                     is_false, fb_details = analyzer.detect_false_breakout(
-                        df_5m, sig["price_level"], direction
+                        df_analysis, sig["price_level"], direction
                     )
                     sig["false_breakout"] = is_false
                     sig["false_breakout_details"] = fb_details
@@ -381,6 +432,10 @@ class NiftyTradingAgent:
 
         # 4. Delegate to Pipeline
         try:
+            # Add dataframe and VWAP to analysis for Market State Engine
+            analysis["df"] = df_5m  # OHLCV dataframe for state evaluation
+            analysis["vwap_series"] = df_5m['VWAP'] if 'VWAP' in df_5m.columns else None
+            
             processed_signals = self.signal_pipeline.process_signals(
                 raw_signals=raw_signals,
                 instrument=instrument,
@@ -540,8 +595,10 @@ class NiftyTradingAgent:
                     curr_price = new_key.level_ticks * 0.05
                     
                     if abs(prev_price - curr_price) < (curr_price * 0.001):
-                        time_diff = (now - timestamp).total_seconds() / 60.0
-                        if time_diff < 30: # 30 min cooldown
+                        time_diff = abs((now - timestamp).total_seconds()) / 60.0
+                        # Use configurable deduplication window
+                        from config.settings import ALERT_DEDUPE_WINDOW_MINUTES
+                        if time_diff < ALERT_DEDUPE_WINDOW_MINUTES:
                             logger.info(f"⏭️ Duplicate Alert {time_diff:.1f}m ago | {key}")
                             return False
             
@@ -560,7 +617,7 @@ class NiftyTradingAgent:
                         
                         # If directions oppose and within 15 mins
                         if current_direction != prev_direction:
-                            conflict_diff = (now - timestamp).total_seconds() / 60.0
+                            conflict_diff = abs((now - timestamp).total_seconds()) / 60.0
                             if conflict_diff < 15:
                                 logger.info(
                                     f"⏭️ Skipping conflicting signal | {current_direction} vs recent {prev_direction} | "
@@ -595,7 +652,7 @@ class NiftyTradingAgent:
                 trade_id = self.trade_tracker.record_alert(signal)
                 if trade_id:
                     logger.info(f"   📝 Trade tracked: {trade_id}")
-                
+                    self._track_signal_for_failure(signal, instrument)
                 # Record this alert to prevent duplicates
                 self.recent_alerts[new_key] = now
                 
@@ -613,7 +670,20 @@ class NiftyTradingAgent:
                 # Save to Firestore for persistence across executions
                 self.persistence.save_recent_alerts(self.recent_alerts)
             else:
-                logger.warning("   ⚠️  Telegram alert failed")
+                # Enhanced error logging
+                logger.error("   ❌ Telegram alert failed - investigating cause...")
+                logger.error(f"   Signal Type: {stype}")
+                logger.error(f"   Instrument: {instrument}")
+                logger.error(f"   Level: {price_level:.2f}")
+                
+                # Test connection to see if bot is still reachable
+                try:
+                    if not self.telegram_bot.test_connection():
+                        logger.error("   ❌ Telegram bot connection lost - credentials may be invalid")
+                    else:
+                        logger.error("   ⚠️  Telegram connection OK but message send failed - check telegram_module logs for details")
+                except Exception as conn_err:
+                    logger.error(f"   ❌ Cannot test Telegram connection: {conn_err}", exc_info=True)
             return success
 
         except Exception as e:
@@ -656,7 +726,7 @@ class NiftyTradingAgent:
             summary = {
                 "timestamp": datetime.now().isoformat(),
                 "instruments": {},
-                "statistics": {
+                "stats": {  # Changed from 'statistics' to 'stats' to match bot_handler.py line 453
                     "data_fetches": stored_stats.get("data_fetches", 0),
                     "analyses_run": stored_stats.get("analyses_run", 0),
                     "alerts_sent": stored_stats.get("alerts_sent", 0),
@@ -927,6 +997,86 @@ class NiftyTradingAgent:
                 if summary:
                     if self.telegram_bot.send_daily_summary(summary):
                         self.persistence.increment_stat("daily_summary_msg_sent")
+
+
+    def _check_failing_signals(self, instrument: str) -> None:
+        """Check if any recent signals are failing and send alerts."""
+        try:
+            # Get current price
+            market_data = self.fetcher.fetch_realtime_data(instrument)
+            if not market_data or 'price' not in market_data:
+                logger.debug(f"⏭️ Skipping failure check for {instrument} - no price data")
+                return
+            
+            current_price = market_data['price']
+            
+            # Check signal health
+            failing_signals = self.failure_detector.check_signal_health(instrument, current_price)
+            
+            if failing_signals:
+                logger.info(f"⚠️ Found {len(failing_signals)} failing signals for {instrument}")
+                
+                for failure in failing_signals:
+                    # Send failure alert
+                    self._send_failure_alert(failure, instrument)
+                    
+                    # Mark as alerted
+                    self.failure_detector.mark_signal_alerted(failure['doc_id'], instrument)
+            
+        except Exception as e:
+            logger.error(f"Failed to check failing signals: {e}")
+    
+    def _send_failure_alert(self, failure: Dict, instrument: str) -> None:
+        """Send Telegram alert for a failing signal."""
+        try:
+            signal = failure['signal']
+            current_price = failure['current_price']
+            price_change = failure['price_change_pct']
+            percent_to_sl = failure['percent_to_sl']
+            minutes_ago = failure['minutes_since_entry']
+            urgency = failure.get('urgency', 'WARNING')
+            
+            # Format alert message
+            direction_emoji = "📈" if signal['direction'] == 'LONG' else "📉"
+            
+            if urgency == 'URGENT':
+                warning_emoji = "🚨"
+                title = "**SIGNAL FAILING URGENTLY**"
+            else:
+                warning_emoji = "⚠️"
+                title = "**SIGNAL FAILING**"
+            
+            message = f"{warning_emoji} {title} {direction_emoji}\\n\\n"
+            message += f"📊 **{instrument}**\\n"
+            message += f"Signal: {signal['signal_type']}\\n"
+            message += f"Direction: {signal['direction']}\\n\\n"
+            
+            message += f"🎯 Entry: {signal['entry_price']:.2f}\\n"
+            message += f"💰 Current: {current_price:.2f}\\n"
+            message += f"🛑 Stop Loss: {signal['stop_loss']:.2f}\\n\\n"
+            
+            move_pts = abs(current_price - signal['entry_price'])
+            message += f"📉 Moved: {move_pts:.0f} points against ({percent_to_sl:.0f}% to SL)\\n"
+            message += f"⏱️ Time: {minutes_ago:.0f} minutes ago\\n\\n"
+            
+            if urgency == 'URGENT':
+                message += f"🚨 **URGENT**: Very close to stop loss!\\n"
+            else:
+                message += f"⚡ **Consider exit** if in position\\n"
+            
+            # Send via Telegram
+            if self.telegram_bot.send_message(message):
+                logger.info(f"   ✅ Failure alert sent for {signal['signal_type']} ({urgency})")
+            
+        except Exception as e:
+            logger.error(f"Failed to send failure alert: {e}")
+    
+    def _track_signal_for_failure(self, signal: Dict, instrument: str) -> None:
+        """Track a signal after sending alert for failure detection."""
+        try:
+            self.failure_detector.track_signal(signal, instrument)
+        except Exception as e:
+            logger.error(f"Failed to track signal: {e}")
 
     def get_statistics(self) -> Dict:
         """Return simple statistics."""

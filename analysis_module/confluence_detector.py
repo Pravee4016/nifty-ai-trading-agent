@@ -36,7 +36,7 @@ def detect_confluence(
     price: float, 
     levels: TechnicalLevels,
     higher_tf_context: Dict,
-    tolerance_pct: float = 0.002  # 0.2% tolerance (±3-5 points for Nifty)
+    tolerance_pct: float = 0.002  # DEPRECATED: Now using absolute points
 ) -> Dict:
     """
     Detect confluence of multiple technical levels at current price.
@@ -47,7 +47,7 @@ def detect_confluence(
         price: Current price to check
         levels: TechnicalLevels object with all key levels
         higher_tf_context: Context with EMAs, VWAP, etc.
-        tolerance_pct: Percentage tolerance for "near" (default 0.2% = ~5 points for 25,000)
+        tolerance_pct: DEPRECATED - Now using absolute points from settings
         
     Returns:
         Dict with:
@@ -56,7 +56,12 @@ def detect_confluence(
             - confluence_score: 0-100 score based on quality
             - is_high_probability: True if 2+ levels converge
     """
-    tolerance = price * tolerance_pct
+    # CRITICAL FIX: Use absolute points, not percentage
+    # Old: tolerance = price * 0.002 = 25000 * 0.002 = 50 points (TOO WIDE!)
+    # New: tolerance = 3.0 points (precise confluence detection)
+    from config.settings import CONFLUENCE_TOLERANCE_POINTS
+    tolerance = CONFLUENCE_TOLERANCE_POINTS  # Absolute 3 points, not percentage
+
     confluent_levels = []
     
     # Check all key levels

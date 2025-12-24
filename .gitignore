@@ -1,6 +1,5 @@
 # Sensitive files - DO NOT COMMIT
-.env
-.env.yaml
+.env*
 *.json
 trading-agent-key.json
 *key.json
